@@ -1,0 +1,225 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <meta name="theme-color" content="#0d0d11">
+    <meta name="description" content="Tesla Model 3 Ultra-Low Latency Android Auto Web Client">
+    <title>Tesla Android Auto Streamer</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <div id="app-container">
+        <!-- Main Video / Rendering Stage -->
+        <main id="display-stage">
+            <!-- WebCodecs Hardware Accelerated Canvas (Primary Engine) -->
+            <canvas id="video-canvas" width="1280" height="720"></canvas>
+            
+            <!-- MSE Fallback Video Element (Secondary Engine) -->
+            <video id="video-player" muted playsinline autoplay disablepictureinpicture></video>
+            
+            <!-- Touch Capture Overlay -->
+            <div id="touch-surface"></div>
+
+            <!-- Standby / Reconnecting Screen -->
+            <div id="status-overlay" class="overlay-visible">
+                <div class="status-card">
+                    <div class="spinner-container">
+                        <div class="pulse-ring"></div>
+                        <div class="status-icon" id="status-icon">🚗</div>
+                    </div>
+                    <h2 id="status-title">In attesa dello Smartphone...</h2>
+                    <p id="status-desc">Attiva l'Hotspot 5GHz e avvia l'app (TaaDa / TesDisplay / Streamer) sul telefono.</p>
+                    
+                    <!-- Quick Preset Selectors for Easy Tesla Touchscreen Access -->
+                    <div class="preset-selector">
+                        <span class="preset-title">Seleziona la tua App:</span>
+                        <div class="preset-buttons">
+                            <button id="preset-taada" class="preset-btn active" data-url="ws://192.168.43.1:8080/stream">TaaDa (8080)</button>
+                            <button id="preset-tesdisplay" class="preset-btn" data-url="ws://192.168.43.1:8000/stream">TesDisplay (8000)</button>
+                            <button id="preset-custom" class="preset-btn" data-url="ws://192.168.43.1:8080">Personalizzato</button>
+                        </div>
+                    </div>
+
+                    <div class="quick-instructions">
+                        <span class="pill">📶 Wi-Fi: "Rimani connesso in Drive"</span>
+                        <span class="pill">🔊 Audio: Bluetooth Tesla</span>
+                    </div>
+
+                    <div class="action-row">
+                        <button id="btn-manual-connect" class="action-btn primary">Connetti Subito</button>
+                        <button id="btn-open-settings" class="action-btn secondary">⚙️ Opzioni IP</button>
+                    </div>
+
+                    <div id="mixed-content-warning" class="warning-banner" style="display: none;">
+                        ⚠️ Se il browser blocca la connessione, tocca "Non sicuro" o apri la versione HTTP.
+                    </div>
+                </div>
+            </div>
+        </main>
+
+        <!-- Unobtrusive Floating Telemetry Pill / HUD -->
+        <header id="telemetry-bar">
+            <div class="telemetry-item status-indicator">
+                <span class="status-dot" id="dot-indicator"></span>
+                <span id="txt-conn-status">Connessione...</span>
+            </div>
+            <div class="telemetry-item">
+                <span class="label">ENGINE:</span>
+                <span class="value" id="val-engine">Auto</span>
+            </div>
+            <div class="telemetry-item">
+                <span class="label">FPS:</span>
+                <span class="value" id="val-fps">0</span>
+            </div>
+            <div class="telemetry-item">
+                <span class="label">LATENZA:</span>
+                <span class="value" id="val-latency">-- ms</span>
+            </div>
+            <div class="telemetry-item">
+                <span class="label">BUFFER:</span>
+                <span class="value" id="val-buffer">0 ms</span>
+            </div>
+            <div class="telemetry-actions">
+                <button id="btn-toggle-hud" class="icon-btn" title="Dettagli diagnostici">📊</button>
+                <button id="btn-settings" class="icon-btn" title="Impostazioni">⚙️</button>
+                <button id="btn-fullscreen" class="icon-btn" title="Schermo intero">⛶</button>
+            </div>
+        </header>
+
+        <!-- Detailed Diagnostics Drawer / Modal -->
+        <div id="diagnostics-modal" class="modal-hidden">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h3>Diagnostica Stream & Hardware MCU2</h3>
+                    <button id="btn-close-diag" class="close-btn">×</button>
+                </div>
+                <div class="diag-grid">
+                    <div class="diag-card">
+                        <span class="diag-label">Codec & Profilo</span>
+                        <span class="diag-val" id="diag-codec">H.264 Baseline L3.1</span>
+                    </div>
+                    <div class="diag-card">
+                        <span class="diag-label">Risoluzione Stream</span>
+                        <span class="diag-val" id="diag-resolution">1280 × 720</span>
+                    </div>
+                    <div class="diag-card">
+                        <span class="diag-label">Bitrate Medio</span>
+                        <span class="diag-val" id="diag-bitrate">0 kbps</span>
+                    </div>
+                    <div class="diag-card">
+                        <span class="diag-label">Frame Decodificati</span>
+                        <span class="diag-val" id="diag-frames-decoded">0</span>
+                    </div>
+                    <div class="diag-card">
+                        <span class="diag-label">Frame Persi / Scartati</span>
+                        <span class="diag-val" id="diag-frames-dropped">0</span>
+                    </div>
+                    <div class="diag-card">
+                        <span class="diag-label">Memoria Buffer Video</span>
+                        <span class="diag-val" id="diag-memory">Zero-Leak Guard Attivo</span>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Settings Modal -->
+        <div id="settings-modal" class="modal-hidden">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h3>Impostazioni Connessione & Rendering</h3>
+                    <button id="btn-close-settings" class="close-btn">×</button>
+                </div>
+                <div class="settings-body">
+                    <div class="form-group">
+                        <label for="input-ws-url">Indirizzo WebSocket Server (Telefono)</label>
+                        <input type="text" id="input-ws-url" placeholder="ws://192.168.43.1:8080/stream">
+                        <small>IP tipico hotspot Android: 192.168.43.1</small>
+                    </div>
+
+                    <div class="form-group">
+                        <label for="select-engine">Motore di Rendering</label>
+                        <select id="select-engine">
+                            <option value="auto">Automatico (WebCodecs se disponibile)</option>
+                            <option value="webcodecs">Forza WebCodecs API (Zero Buffer)</option>
+                            <option value="mse">Forza MediaSource Extensions (MSE fMP4)</option>
+                        </select>
+                    </div>
+
+                    <div class="form-group">
+                        <label for="select-aspect">Proporzioni Schermo</label>
+                        <select id="select-aspect">
+                            <option value="contain">Adatta (16:9 con barre)</option>
+                            <option value="cover">Riempi Schermo Intero</option>
+                            <option value="stretch">Allunga a Tutto Schermo</option>
+                        </select>
+                    </div>
+
+                    <div class="form-group checkbox-group">
+                        <label>
+                            <input type="checkbox" id="check-aggressive-purge" checked>
+                            Svuotamento Aggressivo Buffer (Anti-Crash Intel Atom)
+                        </label>
+                    </div>
+
+                    <div class="form-actions">
+                        <button id="btn-save-settings" class="action-btn primary">Salva e Riavvia</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Scripts -->
+    <script src="js/touch.js"></script>
+    <script src="js/player.js"></script>
+    <script src="js/ws-client.js"></script>
+    <script src="js/hud.js"></script>
+    <script>
+        // Main initialization entry point
+        window.addEventListener('DOMContentLoaded', () => {
+            console.log('[Tesla-AA] Inizializzazione Client Web...');
+            window.App = {
+                touch: new TouchHandler('touch-surface'),
+                player: new VideoPlayer({
+                    canvasId: 'video-canvas',
+                    videoId: 'video-player'
+                }),
+                ws: new StreamWebSocketClient(),
+                hud: new TelemetryHUD()
+            };
+
+            // Connect pipeline components
+            window.App.ws.onFrameReceived = (frameData, timestamp) => {
+                window.App.player.feedChunk(frameData, timestamp);
+            };
+
+            window.App.touch.onPointerEvent = (eventData) => {
+                window.App.ws.sendTouch(eventData);
+            };
+
+            window.App.ws.onStateChange = (state, message) => {
+                window.App.hud.updateConnectionState(state, message);
+            };
+
+            // Setup Preset Buttons
+            const presetButtons = document.querySelectorAll('.preset-btn');
+            presetButtons.forEach(btn => {
+                btn.addEventListener('click', () => {
+                    presetButtons.forEach(b => b.classList.remove('active'));
+                    btn.classList.add('active');
+                    const url = btn.getAttribute('data-url');
+                    if (url) {
+                        window.App.ws.setServerUrl(url);
+                    }
+                });
+            });
+
+            // Start connection
+            window.App.ws.connect();
+        });
+    </script>
+</body>
+</html>
