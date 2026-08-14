@@ -4,10 +4,8 @@ import android.Manifest
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
-import android.media.projection.MediaProjectionManager
 import android.os.Build
 import android.os.Bundle
-import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
@@ -22,43 +20,13 @@ import java.net.NetworkInterface
 
 class MainActivity : ComponentActivity() {
 
-    private lateinit var mediaProjectionManager: MediaProjectionManager
-
     private val notificationPermissionLauncher = registerForActivityResult(
         ActivityResultContracts.RequestPermission()
     ) { _ -> }
 
-    private val screenCaptureLauncher = registerForActivityResult(
-        ActivityResultContracts.StartActivityForResult()
-    ) { result ->
-        if (result.resultCode == RESULT_OK && result.data != null) {
-            val serviceIntent = Intent(this, StreamForegroundService::class.java).apply {
-                action = StreamForegroundService.ACTION_START
-                putExtra(StreamForegroundService.EXTRA_RESULT_CODE, result.resultCode)
-                putExtra(StreamForegroundService.EXTRA_RESULT_DATA, result.data)
-            }
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                startForegroundService(serviceIntent)
-            } else {
-                startService(serviceIntent)
-            }
-        } else {
-            // Start service anyway with AAP mode
-            val serviceIntent = Intent(this, StreamForegroundService::class.java).apply {
-                action = StreamForegroundService.ACTION_START
-            }
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                startForegroundService(serviceIntent)
-            } else {
-                startService(serviceIntent)
-            }
-        }
-    }
-
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
-        mediaProjectionManager = getSystemService(Context.MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
         checkAndRequestPermissions()
 
         setContent {
@@ -73,7 +41,7 @@ class MainActivity : ComponentActivity() {
                     clientCount = clientCount,
                     isAAPConnected = isAAPConnected,
                     hotspotIp = hotspotIp,
-                    onStartClick = { requestScreenCaptureAndStart() },
+                    onStartClick = { startStreamService() },
                     onStopClick = { stopStreamService() }
                 )
             }
@@ -89,8 +57,15 @@ class MainActivity : ComponentActivity() {
         }
     }
 
-    private fun requestScreenCaptureAndStart() {
-        screenCaptureLauncher.launch(mediaProjectionManager.createScreenCaptureIntent())
+    private fun startStreamService() {
+        val intent = Intent(this, StreamForegroundService::class.java).apply {
+            action = StreamForegroundService.ACTION_START
+        }
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            startForegroundService(intent)
+        } else {
+            startService(intent)
+        }
     }
 
     private fun stopStreamService() {

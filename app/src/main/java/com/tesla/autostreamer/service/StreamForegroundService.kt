@@ -1,6 +1,5 @@
 package com.tesla.autostreamer.service
 
-import android.app.Activity
 import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
@@ -9,19 +8,13 @@ import android.app.Service
 import android.content.Context
 import android.content.Intent
 import android.content.pm.ServiceInfo
-import android.hardware.display.DisplayManager
-import android.hardware.display.VirtualDisplay
-import android.media.projection.MediaProjection
-import android.media.projection.MediaProjectionManager
 import android.os.Binder
 import android.os.Build
 import android.os.IBinder
 import android.util.Log
 import androidx.core.app.NotificationCompat
 import com.tesla.autostreamer.MainActivity
-import com.tesla.autostreamer.aap.AAPConstants
 import com.tesla.autostreamer.aap.AAPHeadUnitClient
-import com.tesla.autostreamer.encoder.H264MediaCodecEncoder
 import com.tesla.autostreamer.encoder.VideoConfig
 import com.tesla.autostreamer.input.TouchInjector
 import com.tesla.autostreamer.server.LocalHttpServer
@@ -41,8 +34,6 @@ class StreamForegroundService : Service() {
 
         const val ACTION_START = "com.tesla.autostreamer.START"
         const val ACTION_STOP = "com.tesla.autostreamer.STOP"
-        const val EXTRA_RESULT_CODE = "extra_result_code"
-        const val EXTRA_RESULT_DATA = "extra_result_data"
 
         private val _isRunning = MutableStateFlow(false)
         val isRunning: StateFlow<Boolean> = _isRunning.asStateFlow()
@@ -58,11 +49,6 @@ class StreamForegroundService : Service() {
     private val serviceScope = CoroutineScope(Dispatchers.IO)
 
     private var aapClient: AAPHeadUnitClient? = null
-    private var mediaProjectionManager: MediaProjectionManager? = null
-    private var mediaProjection: MediaProjection? = null
-    private var virtualDisplay: VirtualDisplay? = null
-
-    private var encoder: H264MediaCodecEncoder? = null
     private var server: LocalHttpServer? = null
     private var touchInjector: TouchInjector? = null
     private var wakeLockManager: WakeLockManager? = null
@@ -76,35 +62,26 @@ class StreamForegroundService : Service() {
     override fun onCreate() {
         super.onCreate()
         createNotificationChannel()
-        mediaProjectionManager = getSystemService(Context.MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
         wakeLockManager = WakeLockManager(this)
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         when (intent?.action) {
-            ACTION_START -> {
-                val resultCode = intent.getIntExtra(EXTRA_RESULT_CODE, Activity.RESULT_CANCELED)
-                val resultData = intent.getParcelableExtra<Intent>(EXTRA_RESULT_DATA)
-                startStreaming(resultCode, resultData)
-            }
+            ACTION_START -> startStreaming()
             ACTION_STOP -> stopStreaming()
         }
         return START_STICKY
     }
 
-    private fun startStreaming(resultCode: Int, resultData: Intent?) {
+    private fun startStreaming() {
         if (_isRunning.value) return
-        Log.i(TAG, "Avvio servizio Tesla Auto Streamer con motore AAP & Server Web...")
+        Log.i(TAG, "Avvio servizio Tesla Auto Streamer con protocollo nativo Android Auto (AAP)...")
 
         try {
-            val notification = buildNotification("Server attivo. In attesa di connessione...")
+            val notification = buildNotification("Server attivo. In attesa di Android Auto...")
             
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                if (resultData != null) {
-                    startForeground(NOTIFICATION_ID, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION)
-                } else {
-                    startForeground(NOTIFICATION_ID, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC)
-                }
+                startForeground(NOTIFICATION_ID, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC)
             } else {
                 startForeground(NOTIFICATION_ID, notification)
             }
@@ -140,7 +117,6 @@ class StreamForegroundService : Service() {
                     server = LocalHttpServer(this@StreamForegroundService, port = 8080, touchInjector = touchInjector!!).apply {
                         onClientConnected = {
                             _clientCount.value = connectedClientsCount
-                            encoder?.requestKeyFrame()
                             updateNotification("Tesla connessa! Streaming attivo.")
                         }
                         onClientDisconnected = {
@@ -152,41 +128,13 @@ class StreamForegroundService : Service() {
                         start()
                     }
 
-                    // Connect to Android Auto Head Unit Server (TCP 5277)
+                    // Connect directly to Android Auto Head Unit Server (TCP 5277)
                     aapClient?.connect()
 
-                    // 4. Auxiliary Hardware Encoder (if user granted screen capture fallback)
-                    if (resultData != null && resultCode == Activity.RESULT_OK) {
-                        try {
-                            mediaProjection = mediaProjectionManager?.getMediaProjection(resultCode, resultData)
-                            encoder = H264MediaCodecEncoder(config).apply {
-                                onNalAvailable = { nalData, ptsUs, _ ->
-                                    if (!_isAAPConnected.value) {
-                                        server?.broadcastVideoFrame(nalData, ptsUs)
-                                    }
-                                }
-                                start()
-                            }
-                            val densityDpi = resources.displayMetrics.densityDpi
-                            virtualDisplay = mediaProjection?.createVirtualDisplay(
-                                "TeslaAutoVirtualDisplay",
-                                config.width,
-                                config.height,
-                                densityDpi,
-                                DisplayManager.VIRTUAL_DISPLAY_FLAG_AUTO_MIRROR,
-                                encoder?.inputSurface,
-                                null,
-                                null
-                            )
-                        } catch (e: Exception) {
-                            Log.w(TAG, "VirtualDisplay fallback: ${e.message}")
-                        }
-                    }
-
                     _isRunning.value = true
-                    Log.i(TAG, "Servizio streaming avviato con successo.")
+                    Log.i(TAG, "Servizio streaming puro AAP avviato con successo.")
                 } catch (e: Exception) {
-                    Log.e(TAG, "Errore avvio streaming", e)
+                    Log.e(TAG, "Errore avvio streaming AAP", e)
                     stopStreaming()
                 }
             }
@@ -202,15 +150,6 @@ class StreamForegroundService : Service() {
 
         try { aapClient?.disconnect() } catch (_: Exception) {}
         aapClient = null
-
-        try { virtualDisplay?.release() } catch (_: Exception) {}
-        virtualDisplay = null
-
-        try { mediaProjection?.stop() } catch (_: Exception) {}
-        mediaProjection = null
-
-        try { encoder?.stop() } catch (_: Exception) {}
-        encoder = null
 
         try { server?.stop() } catch (_: Exception) {}
         server = null
