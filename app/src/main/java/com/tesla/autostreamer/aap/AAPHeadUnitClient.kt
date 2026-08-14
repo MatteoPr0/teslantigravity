@@ -3,16 +3,20 @@ package com.tesla.autostreamer.aap
 import android.util.Log
 import java.io.InputStream
 import java.io.OutputStream
+import java.net.InetAddress
+import java.net.InetSocketAddress
 import java.net.Socket
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
 import java.util.concurrent.atomic.AtomicBoolean
 
 /**
- * Native Android Auto Protocol (AAP) Head Unit Client
+ * Resilient Native Android Auto Protocol (AAP) Head Unit Client
  * 
- * Communication Error 2 Fix:
- * Correct 4-byte VersionRequest struct [Major (16-bit) = 1, Minor (16-bit) = 1]
+ * Includes:
+ * 1. Continuous Auto-Reconnect Loop for TCP 5277
+ * 2. Exact 4-byte Version Handshake [1, 1]
+ * 3. Protobuf Service Discovery & Touch Routing
  */
 class AAPHeadUnitClient {
     companion object {
@@ -24,6 +28,9 @@ class AAPHeadUnitClient {
     private var outputStream: OutputStream? = null
 
     private val isRunning = AtomicBoolean(false)
+    private val shouldKeepRunning = AtomicBoolean(false)
+    
+    private var connectionThread: Thread? = null
     private var readerThread: Thread? = null
     private var pingThread: Thread? = null
 
@@ -36,43 +43,58 @@ class AAPHeadUnitClient {
         get() = isRunning.get() && socket?.isConnected == true
 
     fun connect(host: String = AAPConstants.AAP_HOST, port: Int = AAPConstants.AAP_TCP_PORT) {
-        if (isRunning.get()) return
-        Log.i(TAG, "Connessione al server Android Auto ($host:$port)...")
+        if (shouldKeepRunning.get()) return
+        shouldKeepRunning.set(true)
+        Log.i(TAG, "Avvio monitor di connessione continua ad Android Auto ($host:$port)...")
 
-        Thread({
-            try {
-                val s = Socket(host, port)
-                s.tcpNoDelay = true
-                s.receiveBufferSize = 512 * 1024
-                s.sendBufferSize = 64 * 1024
+        connectionThread = Thread({
+            while (shouldKeepRunning.get()) {
+                if (!isRunning.get()) {
+                    try {
+                        Log.d(TAG, "Tentativo di connessione al server Android Auto...")
+                        val s = Socket()
+                        s.tcpNoDelay = true
+                        s.receiveBufferSize = 512 * 1024
+                        s.sendBufferSize = 64 * 1024
+                        s.connect(InetSocketAddress(InetAddress.getByName(host), port), 2000)
 
-                socket = s
-                inputStream = s.getInputStream()
-                outputStream = s.getOutputStream()
+                        socket = s
+                        inputStream = s.getInputStream()
+                        outputStream = s.getOutputStream()
 
-                isRunning.set(true)
-                Log.i(TAG, "Socket TCP 5277 connesso! Invio handshake versione...")
+                        isRunning.set(true)
+                        Log.i(TAG, "Connesso con successo al server Android Auto (porta $port)!")
 
-                // 1. Send Exact 4-byte AAP Version Handshake (Major: 1, Minor: 1)
-                sendVersionRequest(1, 1)
+                        // 1. Send Exact 4-byte Version Handshake (Major 1, Minor 1)
+                        sendVersionRequest(1, 1)
 
-                // 2. Start Message Read Loop
-                readerThread = Thread({ readLoop() }, "AAP-Reader-Thread").apply { start() }
+                        // 2. Start Reader Thread
+                        readerThread = Thread({ readLoop() }, "AAP-Reader-Thread").apply { start() }
 
-                // 3. Start Heartbeat Ping Loop
-                pingThread = Thread({ pingLoop() }, "AAP-Ping-Thread").apply { start() }
+                        // 3. Start Ping Thread
+                        pingThread = Thread({ pingLoop() }, "AAP-Ping-Thread").apply { start() }
 
-            } catch (e: Exception) {
-                Log.w(TAG, "Impossibile connettersi ad Android Auto su $host:$port: ${e.message}")
-                disconnect()
+                        onConnected?.invoke()
+
+                    } catch (e: Exception) {
+                        Log.d(TAG, "Server Android Auto non ancora pronto su porta $port (${e.message}). Nuovo tentativo tra 1.5s...")
+                        cleanupSocket()
+                    }
+                }
+
+                try {
+                    Thread.sleep(1500)
+                } catch (_: InterruptedException) {
+                    break
+                }
             }
-        }, "AAP-Connect-Thread").start()
+        }, "AAP-Connection-Supervisor").apply { start() }
     }
 
     private fun readLoop() {
         val inStream = inputStream ?: return
         try {
-            while (isRunning.get()) {
+            while (isRunning.get() && shouldKeepRunning.get()) {
                 val packet = AAPPacket.readFrom(inStream) ?: break
 
                 when (packet.channel) {
@@ -86,14 +108,15 @@ class AAPHeadUnitClient {
                 Log.w(TAG, "Disconnessione readLoop: ${e.message}")
             }
         } finally {
-            disconnect()
+            cleanupSocket()
+            onDisconnected?.invoke()
         }
     }
 
     private fun handleControlPacket(packet: AAPPacket) {
         if (packet.payload.isEmpty()) return
 
-        // Check for 4-byte VersionResponse
+        // 4-byte VersionResponse
         if (packet.payload.size >= 4) {
             val buf = ByteBuffer.wrap(packet.payload).order(ByteOrder.BIG_ENDIAN)
             val major = buf.short.toInt() and 0xFFFF
@@ -146,11 +169,6 @@ class AAPHeadUnitClient {
         // Channel ACKs
     }
 
-    /**
-     * Exact 4-byte AAP Version Request struct:
-     * [2 bytes: Major Version (Big Endian = 1)]
-     * [2 bytes: Minor Version (Big Endian = 1)]
-     */
     private fun sendVersionRequest(major: Int, minor: Int) {
         val out = outputStream ?: return
         val payload = ByteBuffer.allocate(4).apply {
@@ -186,7 +204,7 @@ class AAPHeadUnitClient {
     }
 
     private fun pingLoop() {
-        while (isRunning.get()) {
+        while (isRunning.get() && shouldKeepRunning.get()) {
             try {
                 Thread.sleep(2000)
                 val out = outputStream ?: continue
@@ -223,17 +241,22 @@ class AAPHeadUnitClient {
         } catch (_: Exception) {}
     }
 
-    fun disconnect() {
-        if (!isRunning.getAndSet(false)) return
-        Log.i(TAG, "Disconnessione client AAP...")
-
+    private fun cleanupSocket() {
+        isRunning.set(false)
         try { socket?.close() } catch (_: Exception) {}
         socket = null
         inputStream = null
         outputStream = null
+    }
 
+    fun disconnect() {
+        shouldKeepRunning.set(false)
+        cleanupSocket()
+
+        try { connectionThread?.interrupt() } catch (_: Exception) {}
         try { readerThread?.interrupt() } catch (_: Exception) {}
         try { pingThread?.interrupt() } catch (_: Exception) {}
+        connectionThread = null
         readerThread = null
         pingThread = null
 
