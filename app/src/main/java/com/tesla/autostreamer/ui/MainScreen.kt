@@ -1,5 +1,9 @@
 package com.tesla.autostreamer.ui
 
+import android.content.Context
+import android.content.Intent
+import android.net.Uri
+import android.widget.Toast
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
@@ -7,17 +11,17 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.DirectionsCar
 import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Stop
-import androidx.compose.material.icons.filled.Wifi
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -34,10 +38,13 @@ import com.tesla.autostreamer.ui.theme.TextSecondary
 fun MainScreen(
     isRunning: Boolean,
     clientCount: Int,
+    isAAPConnected: Boolean,
     hotspotIp: String,
     onStartClick: () -> Unit,
     onStopClick: () -> Unit
 ) {
+    val context = LocalContext.current
+
     Scaffold(
         topBar = {
             TopAppBar(
@@ -72,9 +79,9 @@ fun MainScreen(
                 .padding(horizontal = 20.dp)
                 .verticalScroll(rememberScrollState()),
             horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.spacedBy(18.dp)
+            verticalArrangement = Arrangement.spacedBy(16.dp)
         ) {
-            Spacer(modifier = Modifier.height(6.dp))
+            Spacer(modifier = Modifier.height(4.dp))
 
             // Main Status & Power Card
             Card(
@@ -85,9 +92,9 @@ fun MainScreen(
                 Column(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(24.dp),
+                        .padding(22.dp),
                     horizontalAlignment = Alignment.CenterHorizontally,
-                    verticalArrangement = Arrangement.spacedBy(16.dp)
+                    verticalArrangement = Arrangement.spacedBy(14.dp)
                 ) {
                     // Status Badge
                     Row(
@@ -117,7 +124,7 @@ fun MainScreen(
                         onClick = { if (isRunning) onStopClick() else onStartClick() },
                         modifier = Modifier
                             .fillMaxWidth()
-                            .height(56.dp),
+                            .height(54.dp),
                         shape = RoundedCornerShape(14.dp),
                         colors = ButtonDefaults.buttonColors(
                             containerColor = if (isRunning) Color(0xFF374151) else TeslaRed
@@ -142,7 +149,7 @@ fun MainScreen(
                                 .fillMaxWidth()
                                 .clip(RoundedCornerShape(12.dp))
                                 .background(Color(0xFF0F1015))
-                                .padding(14.dp),
+                                .padding(12.dp),
                             horizontalAlignment = Alignment.CenterHorizontally
                         ) {
                             Text(
@@ -163,6 +170,49 @@ fun MainScreen(
                 }
             }
 
+            // Android Auto Protocol (AAP) Status Card
+            Card(
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(18.dp),
+                colors = CardDefaults.cardColors(containerColor = SurfaceElevated)
+            ) {
+                Column(
+                    modifier = Modifier.padding(18.dp),
+                    verticalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    Text(
+                        text = "Motore Android Auto Ufficiale (Porta 5277)",
+                        fontSize = 14.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = TextPrimary
+                    )
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text("Stato Android Auto", color = TextSecondary, fontSize = 13.sp)
+                        Text(
+                            text = if (isAAPConnected) "Connesso (Nativo Google)" else "In attesa server",
+                            fontWeight = FontWeight.SemiBold,
+                            color = if (isAAPConnected) StatusGreen else Color(0xFFF59E0B),
+                            fontSize = 13.sp
+                        )
+                    }
+
+                    OutlinedButton(
+                        onClick = { openAndroidAutoSettings(context) },
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = RoundedCornerShape(10.dp)
+                    ) {
+                        Icon(Icons.Default.Settings, contentDescription = null, modifier = Modifier.size(16.dp))
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Text("Apri Impostazioni Android Auto", fontSize = 12.sp)
+                    }
+                }
+            }
+
             // Live Diagnostics Card
             Card(
                 modifier = Modifier.fillMaxWidth(),
@@ -170,11 +220,11 @@ fun MainScreen(
                 colors = CardDefaults.cardColors(containerColor = SurfaceElevated)
             ) {
                 Column(
-                    modifier = Modifier.padding(20.dp),
-                    verticalArrangement = Arrangement.spacedBy(12.dp)
+                    modifier = Modifier.padding(18.dp),
+                    verticalArrangement = Arrangement.spacedBy(10.dp)
                 ) {
                     Text(
-                        text = "Parametri Stream (Tuning Model 3 2019)",
+                        text = "Ottimizzazioni per Tesla Model 3 (MCU2 Atom)",
                         fontSize = 14.sp,
                         fontWeight = FontWeight.Bold,
                         color = TextPrimary
@@ -197,7 +247,7 @@ fun MainScreen(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.SpaceBetween
                     ) {
-                        Text("Risoluzione & FPS", color = TextSecondary, fontSize = 13.sp)
+                        Text("Risoluzione Video", color = TextSecondary, fontSize = 13.sp)
                         Text("720p (1280x720) @ 30 FPS", fontWeight = FontWeight.SemiBold, color = TextPrimary, fontSize = 13.sp)
                     }
 
@@ -205,45 +255,56 @@ fun MainScreen(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.SpaceBetween
                     ) {
-                        Text("Codec Profilo", color = TextSecondary, fontSize = 13.sp)
+                        Text("Codec & Profilo", color = TextSecondary, fontSize = 13.sp)
                         Text("H.264 Baseline L3.1 CBR", fontWeight = FontWeight.SemiBold, color = TextPrimary, fontSize = 13.sp)
-                    }
-
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween
-                    ) {
-                        Text("Audio", color = TextSecondary, fontSize = 13.sp)
-                        Text("Bluetooth Diretto (Zero-Audio Browser)", fontWeight = FontWeight.SemiBold, color = Color(0xFF3B82F6), fontSize = 13.sp)
                     }
                 }
             }
 
-            // Checklist Guide Card
+            // Quick Setup Checklist
             Card(
                 modifier = Modifier.fillMaxWidth(),
                 shape = RoundedCornerShape(18.dp),
                 colors = CardDefaults.cardColors(containerColor = SurfaceElevated)
             ) {
                 Column(
-                    modifier = Modifier.padding(20.dp),
-                    verticalArrangement = Arrangement.spacedBy(10.dp)
+                    modifier = Modifier.padding(18.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
                     Text(
-                        text = "Istruzioni Rapide per la Guida",
+                        text = "Istruzioni per l'Avvio",
                         fontSize = 14.sp,
                         fontWeight = FontWeight.Bold,
                         color = TextPrimary
                     )
 
-                    InstructionStep("1", "Attiva l'Hotspot Wi-Fi dello smartphone (banda 5GHz raccomandata).")
-                    InstructionStep("2", "Sulla Tesla: connettiti al Wi-Fi e spunta 'Rimani connesso in Drive'.")
-                    InstructionStep("3", "Collega il Bluetooth dello smartphone all'auto per chiamate e audio.")
-                    InstructionStep("4", "Apri il browser Tesla all'indirizzo sopra e metti a schermo intero.")
+                    InstructionStep("1", "Attiva l'Hotspot Wi-Fi 5GHz dello smartphone.")
+                    InstructionStep("2", "In Android Auto -> Impostazioni sviluppatore (3 puntini) -> 'Avvia server head unit'.")
+                    InstructionStep("3", "Tocca 'Avvia Streaming' in quest'app.")
+                    InstructionStep("4", "Sulla Tesla apri l'indirizzo mostrato sopra o il link GitHub Pages.")
                 }
             }
 
             Spacer(modifier = Modifier.height(16.dp))
+        }
+    }
+}
+
+private fun openAndroidAutoSettings(context: Context) {
+    try {
+        val intent = Intent("com.google.android.projection.gearhead.SETTINGS").apply {
+            flags = Intent.FLAG_ACTIVITY_NEW_TASK
+        }
+        context.startActivity(intent)
+    } catch (_: Exception) {
+        try {
+            val intent = Intent(android.provider.Settings.ACTION_APPLICATION_DETAILS_SETTINGS).apply {
+                data = Uri.parse("package:com.google.android.projection.gearhead")
+                flags = Intent.FLAG_ACTIVITY_NEW_TASK
+            }
+            context.startActivity(intent)
+        } catch (e: Exception) {
+            Toast.makeText(context, "Impossibile aprire impostazioni Android Auto", Toast.LENGTH_SHORT).show()
         }
     }
 }
@@ -256,7 +317,7 @@ fun InstructionStep(number: String, text: String) {
     ) {
         Box(
             modifier = Modifier
-                .size(22.dp)
+                .size(20.dp)
                 .clip(CircleShape)
                 .background(Color(0xFF262833)),
             contentAlignment = Alignment.Center

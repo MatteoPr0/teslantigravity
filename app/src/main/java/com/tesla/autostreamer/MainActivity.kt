@@ -43,7 +43,15 @@ class MainActivity : ComponentActivity() {
                 startService(serviceIntent)
             }
         } else {
-            Toast.makeText(this, "Permesso di cattura schermo necessario per lo streaming", Toast.LENGTH_SHORT).show()
+            // Start service anyway with AAP mode
+            val serviceIntent = Intent(this, StreamForegroundService::class.java).apply {
+                action = StreamForegroundService.ACTION_START
+            }
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                startForegroundService(serviceIntent)
+            } else {
+                startService(serviceIntent)
+            }
         }
     }
 
@@ -56,12 +64,14 @@ class MainActivity : ComponentActivity() {
         setContent {
             val isRunning by StreamForegroundService.isRunning.collectAsState()
             val clientCount by StreamForegroundService.clientCount.collectAsState()
+            val isAAPConnected by StreamForegroundService.isAAPConnected.collectAsState()
             val hotspotIp = getHotspotIpAddress()
 
             TeslaStreamerTheme {
                 MainScreen(
                     isRunning = isRunning,
                     clientCount = clientCount,
+                    isAAPConnected = isAAPConnected,
                     hotspotIp = hotspotIp,
                     onStartClick = { requestScreenCaptureAndStart() },
                     onStopClick = { stopStreamService() }
