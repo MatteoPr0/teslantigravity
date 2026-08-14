@@ -9,14 +9,10 @@ import java.nio.ByteOrder
 import java.util.concurrent.atomic.AtomicBoolean
 
 /**
- * Full Native Android Auto Protocol (AAP) Head Unit Client
+ * Native Android Auto Protocol (AAP) Head Unit Client
  * 
- * Implements:
- * 1. Version Handshake (Major 1, Minor 6)
- * 2. SSL/TLS Channel 0 Encapsulation
- * 3. Protobuf Service Discovery (1280x720 30FPS H.264 Video Sink)
- * 4. Channel Open Acknowledgment & Video Frame Routing
- * 5. High-Frequency Multi-Touch Injection
+ * Communication Error 2 Fix:
+ * Correct 4-byte VersionRequest struct [Major (16-bit) = 1, Minor (16-bit) = 1]
  */
 class AAPHeadUnitClient {
     companion object {
@@ -55,10 +51,10 @@ class AAPHeadUnitClient {
                 outputStream = s.getOutputStream()
 
                 isRunning.set(true)
-                Log.i(TAG, "Connesso al socket TCP 5277 di Android Auto!")
+                Log.i(TAG, "Socket TCP 5277 connesso! Invio handshake versione...")
 
-                // 1. Send Version Handshake (Major 1, Minor 6)
-                sendVersionRequest(1, 6)
+                // 1. Send Exact 4-byte AAP Version Handshake (Major: 1, Minor: 1)
+                sendVersionRequest(1, 1)
 
                 // 2. Start Message Read Loop
                 readerThread = Thread({ readLoop() }, "AAP-Reader-Thread").apply { start() }
@@ -95,25 +91,35 @@ class AAPHeadUnitClient {
     }
 
     private fun handleControlPacket(packet: AAPPacket) {
-        if (packet.payload.size < 2) return
+        if (packet.payload.isEmpty()) return
+
+        // Check for 4-byte VersionResponse
+        if (packet.payload.size >= 4) {
+            val buf = ByteBuffer.wrap(packet.payload).order(ByteOrder.BIG_ENDIAN)
+            val major = buf.short.toInt() and 0xFFFF
+            val minor = buf.short.toInt() and 0xFFFF
+            val status = if (packet.payload.size >= 6) buf.short.toInt() and 0xFFFF else 0
+
+            Log.i(TAG, "[AAP] Ricevuto VersionResponse: $major.$minor (status: $status). Invio Service Discovery...")
+            sendServiceDiscovery()
+            onConnected?.invoke()
+            return
+        }
+
         val msgType = ByteBuffer.wrap(packet.payload, 0, 2).order(ByteOrder.BIG_ENDIAN).short.toInt() and 0xFFFF
 
         when (msgType) {
-            AAPConstants.MSG_VERSION_RESPONSE -> {
-                Log.i(TAG, "[AAP] Ricevuto Version Response da Google. Invio Service Discovery Protobuf...")
-                sendServiceDiscovery()
-            }
             AAPConstants.MSG_SERVICE_DISCOVERY_REQUEST -> {
-                Log.i(TAG, "[AAP] Richiesta Service Discovery da Android Auto. Invio parametri display Tesla 720p...")
+                Log.i(TAG, "[AAP] Richiesta Service Discovery. Invio parametri Tesla 1280x720 30FPS...")
                 sendServiceDiscovery()
             }
             AAPConstants.MSG_CHANNEL_OPEN_REQUEST -> {
-                Log.i(TAG, "[AAP] Ricevuto Channel Open Request. Invio Channel Open Response (OK)...")
+                Log.i(TAG, "[AAP] Ricevuto Channel Open Request. Rispondo OK...")
                 sendChannelOpenResponse()
                 onConnected?.invoke()
             }
             AAPConstants.MSG_AUTH_COMPLETE -> {
-                Log.i(TAG, "[AAP] Autenticazione completata con successo da Android Auto!")
+                Log.i(TAG, "[AAP] Autenticazione completata con successo!")
                 onConnected?.invoke()
             }
             AAPConstants.MSG_PING_REQUEST -> {
@@ -140,24 +146,28 @@ class AAPHeadUnitClient {
         // Channel ACKs
     }
 
+    /**
+     * Exact 4-byte AAP Version Request struct:
+     * [2 bytes: Major Version (Big Endian = 1)]
+     * [2 bytes: Minor Version (Big Endian = 1)]
+     */
     private fun sendVersionRequest(major: Int, minor: Int) {
         val out = outputStream ?: return
-        val payload = ByteBuffer.allocate(6).apply {
+        val payload = ByteBuffer.allocate(4).apply {
             order(ByteOrder.BIG_ENDIAN)
-            putShort(AAPConstants.MSG_VERSION_REQUEST.toShort())
             putShort(major.toShort())
             putShort(minor.toShort())
         }.array()
 
         AAPPacket(AAPConstants.CHANNEL_CONTROL, AAPConstants.FLAG_FIRST or AAPConstants.FLAG_LAST, payload).writeTo(out)
-        Log.d(TAG, "[AAP] Inviato Version Request ($major.$minor)")
+        Log.i(TAG, "[AAP] Inviato VersionRequest pulito di 4 bytes ($major.$minor)")
     }
 
     private fun sendServiceDiscovery() {
         val out = outputStream ?: return
         val payload = AAPProtobufBuilder.buildServiceDiscoveryResponse()
         AAPPacket(AAPConstants.CHANNEL_CONTROL, AAPConstants.FLAG_FIRST or AAPConstants.FLAG_LAST, payload).writeTo(out)
-        Log.i(TAG, "[AAP] Inviato Service Discovery Protobuf completo.")
+        Log.i(TAG, "[AAP] Inviato ServiceDiscoveryResponse Protobuf a Google Maps / Android Auto.")
     }
 
     private fun sendChannelOpenResponse() {
@@ -193,12 +203,6 @@ class AAPHeadUnitClient {
         }
     }
 
-    /**
-     * Injects normalized Tesla touch events into Android Auto via AAP Protobuf InputEvent
-     * @param action 0 = DOWN, 1 = UP, 2 = MOVE
-     * @param normX 0.0 - 1.0
-     * @param normY 0.0 - 1.0
-     */
     fun sendTouchEvent(action: Int, normX: Float, normY: Float, pointerId: Int) {
         val out = outputStream ?: return
         if (!isRunning.get()) return
