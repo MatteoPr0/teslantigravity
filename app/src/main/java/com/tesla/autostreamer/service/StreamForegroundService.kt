@@ -1,5 +1,6 @@
 package com.tesla.autostreamer.service
 
+import android.app.Activity
 import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
@@ -8,6 +9,10 @@ import android.app.Service
 import android.content.Context
 import android.content.Intent
 import android.content.pm.ServiceInfo
+import android.hardware.display.DisplayManager
+import android.hardware.display.VirtualDisplay
+import android.media.projection.MediaProjection
+import android.media.projection.MediaProjectionManager
 import android.os.Binder
 import android.os.Build
 import android.os.IBinder
@@ -34,6 +39,8 @@ class StreamForegroundService : Service() {
 
         const val ACTION_START = "com.tesla.autostreamer.START"
         const val ACTION_STOP = "com.tesla.autostreamer.STOP"
+        const val EXTRA_RESULT_CODE = "extra_result_code"
+        const val EXTRA_RESULT_DATA = "extra_result_data"
 
         private val _isRunning = MutableStateFlow(false)
         val isRunning: StateFlow<Boolean> = _isRunning.asStateFlow()
@@ -44,6 +51,10 @@ class StreamForegroundService : Service() {
 
     private val binder = LocalBinder()
     private val serviceScope = CoroutineScope(Dispatchers.IO)
+
+    private var mediaProjectionManager: MediaProjectionManager? = null
+    private var mediaProjection: MediaProjection? = null
+    private var virtualDisplay: VirtualDisplay? = null
 
     private var encoder: H264MediaCodecEncoder? = null
     private var server: LocalHttpServer? = null
@@ -59,39 +70,58 @@ class StreamForegroundService : Service() {
     override fun onCreate() {
         super.onCreate()
         createNotificationChannel()
+        mediaProjectionManager = getSystemService(Context.MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
         wakeLockManager = WakeLockManager(this)
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         when (intent?.action) {
-            ACTION_START -> startStreaming()
+            ACTION_START -> {
+                val resultCode = intent.getIntExtra(EXTRA_RESULT_CODE, Activity.RESULT_CANCELED)
+                val resultData = intent.getParcelableExtra<Intent>(EXTRA_RESULT_DATA)
+                if (resultCode == Activity.RESULT_OK && resultData != null) {
+                    startStreaming(resultCode, resultData)
+                } else {
+                    Log.e(TAG, "Dati MediaProjection mancanti!")
+                    stopSelf()
+                }
+            }
             ACTION_STOP -> stopStreaming()
         }
         return START_STICKY
     }
 
-    private fun startStreaming() {
+    private fun startStreaming(resultCode: Int, resultData: Intent) {
         if (_isRunning.value) return
-        Log.i(TAG, "Avvio servizio di streaming Tesla...")
+        Log.i(TAG, "Avvio streaming con acquisizione schermo MediaProjection...")
 
         try {
             val notification = buildNotification("Server attivo. In attesa di connessione Tesla...")
             
-            // Android 14+ DataSync Foreground Service
+            // Android 14+ MediaProjection Foreground Service
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                startForeground(NOTIFICATION_ID, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC)
+                startForeground(NOTIFICATION_ID, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION)
             } else {
                 startForeground(NOTIFICATION_ID, notification)
             }
 
             wakeLockManager?.acquire()
 
+            // Initialize MediaProjection
+            mediaProjection = mediaProjectionManager?.getMediaProjection(resultCode, resultData)
+            mediaProjection?.registerCallback(object : MediaProjection.Callback() {
+                override fun onStop() {
+                    Log.w(TAG, "MediaProjection interrotta dal sistema o dall'utente.")
+                    stopStreaming()
+                }
+            }, null)
+
             serviceScope.launch {
                 try {
                     val config = VideoConfig.PRESET_720P_30FPS
                     touchInjector = TouchInjector(this@StreamForegroundService, config.width, config.height)
 
-                    // Initialize Embedded HTTP / WebSocket Server
+                    // 1. Initialize Embedded HTTP & WebSocket Server
                     server = LocalHttpServer(this@StreamForegroundService, port = 8080, touchInjector = touchInjector!!).apply {
                         onClientConnected = {
                             _clientCount.value = connectedClientsCount
@@ -107,7 +137,7 @@ class StreamForegroundService : Service() {
                         start()
                     }
 
-                    // Initialize Hardware Encoder
+                    // 2. Initialize Hardware Encoder (MediaCodec H.264 Baseline)
                     encoder = H264MediaCodecEncoder(config).apply {
                         onNalAvailable = { nalData, ptsUs, _ ->
                             server?.broadcastVideoFrame(nalData, ptsUs)
@@ -115,22 +145,45 @@ class StreamForegroundService : Service() {
                         start()
                     }
 
+                    // 3. Create VirtualDisplay attached directly to encoder inputSurface (Zero-Copy GPU capture)
+                    val densityDpi = resources.displayMetrics.densityDpi
+                    virtualDisplay = mediaProjection?.createVirtualDisplay(
+                        "TeslaAutoVirtualDisplay",
+                        config.width,
+                        config.height,
+                        densityDpi,
+                        DisplayManager.VIRTUAL_DISPLAY_FLAG_AUTO_MIRROR,
+                        encoder?.inputSurface,
+                        null,
+                        null
+                    )
+
                     _isRunning.value = true
-                    Log.i(TAG, "Servizio streaming avviato con successo.")
+                    Log.i(TAG, "Streaming schermo reale avviato con successo su VirtualDisplay.")
                 } catch (e: Exception) {
-                    Log.e(TAG, "Errore durante l'inizializzazione del server", e)
+                    Log.e(TAG, "Errore durante l'avvio dello streaming", e)
                     stopStreaming()
                 }
             }
         } catch (e: Exception) {
-            Log.e(TAG, "Errore startForeground:", e)
+            Log.e(TAG, "Errore startForeground MediaProjection:", e)
             stopStreaming()
         }
     }
 
     private fun stopStreaming() {
         if (!_isRunning.value) return
-        Log.i(TAG, "Arresto servizio di streaming Tesla...")
+        Log.i(TAG, "Arresto servizio streaming...")
+
+        try {
+            virtualDisplay?.release()
+        } catch (_: Exception) {}
+        virtualDisplay = null
+
+        try {
+            mediaProjection?.stop()
+        } catch (_: Exception) {}
+        mediaProjection = null
 
         try {
             encoder?.stop()
@@ -162,7 +215,7 @@ class StreamForegroundService : Service() {
                 "Tesla Auto Streamer",
                 NotificationManager.IMPORTANCE_LOW
             ).apply {
-                description = "Notifica per lo streaming attivo verso il browser Tesla"
+                description = "Streaming schermo attivo verso il browser Tesla"
             }
             val manager = getSystemService(NotificationManager::class.java)
             manager?.createNotificationChannel(channel)
