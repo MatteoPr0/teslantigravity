@@ -11,12 +11,14 @@ import java.nio.ByteOrder
 import java.util.concurrent.atomic.AtomicBoolean
 
 /**
- * Resilient Native Android Auto Protocol (AAP) Head Unit Client
+ * Complete Native Android Auto Protocol (AAP) Head Unit Coordinator
  * 
- * Includes:
- * 1. Continuous Auto-Reconnect Loop for TCP 5277
- * 2. Exact 4-byte Version Handshake [1, 1]
- * 3. Protobuf Service Discovery & Touch Routing
+ * Features:
+ * 1. TCP 5277 Socket Supervisor with Auto-Recovery
+ * 2. 4-byte Version Handshake (Major 1, Minor 1)
+ * 3. Hardware-Accelerated TLS 1.2/1.3 Handshake via AAPSSLEngine
+ * 4. Protobuf Service Discovery (1280x720 30FPS H.264 Video Sink)
+ * 5. Channel Open ACKs for Video & Multi-Touch Input
  */
 class AAPHeadUnitClient {
     companion object {
@@ -30,6 +32,8 @@ class AAPHeadUnitClient {
     private val isRunning = AtomicBoolean(false)
     private val shouldKeepRunning = AtomicBoolean(false)
     
+    private var sslEngine: AAPSSLEngine? = null
+
     private var connectionThread: Thread? = null
     private var readerThread: Thread? = null
     private var pingThread: Thread? = null
@@ -56,14 +60,15 @@ class AAPHeadUnitClient {
                         s.tcpNoDelay = true
                         s.receiveBufferSize = 512 * 1024
                         s.sendBufferSize = 64 * 1024
-                        s.connect(InetSocketAddress(InetAddress.getByName(host), port), 2000)
+                        s.connect(InetSocketAddress(InetAddress.getByName(host), port), 2500)
 
                         socket = s
                         inputStream = s.getInputStream()
                         outputStream = s.getOutputStream()
+                        sslEngine = AAPSSLEngine()
 
                         isRunning.set(true)
-                        Log.i(TAG, "Connesso con successo al server Android Auto (porta $port)!")
+                        Log.i(TAG, "Socket TCP 5277 connesso! Invio handshake versione...")
 
                         // 1. Send Exact 4-byte Version Handshake (Major 1, Minor 1)
                         sendVersionRequest(1, 1)
@@ -73,8 +78,6 @@ class AAPHeadUnitClient {
 
                         // 3. Start Ping Thread
                         pingThread = Thread({ pingLoop() }, "AAP-Ping-Thread").apply { start() }
-
-                        onConnected?.invoke()
 
                     } catch (e: Exception) {
                         Log.d(TAG, "Server Android Auto non ancora pronto su porta $port (${e.message}). Nuovo tentativo tra 1.5s...")
@@ -116,33 +119,50 @@ class AAPHeadUnitClient {
     private fun handleControlPacket(packet: AAPPacket) {
         if (packet.payload.isEmpty()) return
 
-        // 4-byte VersionResponse
-        if (packet.payload.size >= 4) {
+        // 1. VersionResponse check (4 bytes: major=1, minor=1)
+        if (packet.payload.size == 4 || packet.payload.size == 6) {
             val buf = ByteBuffer.wrap(packet.payload).order(ByteOrder.BIG_ENDIAN)
             val major = buf.short.toInt() and 0xFFFF
             val minor = buf.short.toInt() and 0xFFFF
-            val status = if (packet.payload.size >= 6) buf.short.toInt() and 0xFFFF else 0
+            Log.i(TAG, "[AAP] Ricevuto VersionResponse ($major.$minor). Avvio TLS Handshake...")
 
-            Log.i(TAG, "[AAP] Ricevuto VersionResponse: $major.$minor (status: $status). Invio Service Discovery...")
-            sendServiceDiscovery()
-            onConnected?.invoke()
+            // Initiate SSL Handshake
+            val clientHello = sslEngine?.startHandshake()
+            if (clientHello != null) {
+                sendSSLHandshake(clientHello)
+            }
             return
         }
 
         val msgType = ByteBuffer.wrap(packet.payload, 0, 2).order(ByteOrder.BIG_ENDIAN).short.toInt() and 0xFFFF
+        val rawData = if (packet.payload.size > 2) packet.payload.copyOfRange(2, packet.payload.size) else ByteArray(0)
 
         when (msgType) {
+            AAPConstants.MSG_SSL_HANDSHAKE -> {
+                Log.d(TAG, "[AAP] Ricevuto SSL Handshake da Android Auto (${rawData.size} bytes)...")
+                val nextPacket = sslEngine?.processServerHandshake(rawData)
+                if (nextPacket != null) {
+                    sendSSLHandshake(nextPacket)
+                }
+                if (sslEngine?.isHandshakeComplete == true) {
+                    Log.i(TAG, "[AAP] TLS Handshake completato! Invio AuthComplete e ServiceDiscovery...")
+                    sendAuthComplete()
+                    sendServiceDiscovery()
+                    onConnected?.invoke()
+                }
+            }
             AAPConstants.MSG_SERVICE_DISCOVERY_REQUEST -> {
-                Log.i(TAG, "[AAP] Richiesta Service Discovery. Invio parametri Tesla 1280x720 30FPS...")
+                Log.i(TAG, "[AAP] Richiesta Service Discovery da Android Auto. Invio parametri Tesla 720p...")
                 sendServiceDiscovery()
             }
             AAPConstants.MSG_CHANNEL_OPEN_REQUEST -> {
-                Log.i(TAG, "[AAP] Ricevuto Channel Open Request. Rispondo OK...")
-                sendChannelOpenResponse()
+                Log.i(TAG, "[AAP] Ricevuto Channel Open Request sul canale ${packet.channel}. Rispondo OK...")
+                sendChannelOpenResponse(packet.channel, 0)
                 onConnected?.invoke()
             }
             AAPConstants.MSG_AUTH_COMPLETE -> {
-                Log.i(TAG, "[AAP] Autenticazione completata con successo!")
+                Log.i(TAG, "[AAP] Autenticazione confermata da Google!")
+                sendServiceDiscovery()
                 onConnected?.invoke()
             }
             AAPConstants.MSG_PING_REQUEST -> {
@@ -154,7 +174,17 @@ class AAPHeadUnitClient {
     private fun handleVideoPacket(packet: AAPPacket) {
         if (packet.payload.isEmpty()) return
 
-        // Skip 2-byte AAP video message header if present (MSG_VIDEO_DATA = 0x0002)
+        // Check if Channel Open Request on Video Channel
+        if (packet.payload.size >= 2) {
+            val msgType = ByteBuffer.wrap(packet.payload, 0, 2).order(ByteOrder.BIG_ENDIAN).short.toInt() and 0xFFFF
+            if (msgType == AAPConstants.MSG_CHANNEL_OPEN_REQUEST) {
+                Log.i(TAG, "[AAP] Ricevuto Channel Open Request su Canale Video. Invio OK...")
+                sendChannelOpenResponse(AAPConstants.CHANNEL_VIDEO, 0)
+                return
+            }
+        }
+
+        // Extract H.264 NAL unit
         val nalBytes = if (packet.payload.size > 2 && packet.payload[0] == 0x00.toByte() && packet.payload[1] == 0x02.toByte()) {
             packet.payload.copyOfRange(2, packet.payload.size)
         } else {
@@ -166,7 +196,13 @@ class AAPHeadUnitClient {
     }
 
     private fun handleInputPacket(packet: AAPPacket) {
-        // Channel ACKs
+        if (packet.payload.size >= 2) {
+            val msgType = ByteBuffer.wrap(packet.payload, 0, 2).order(ByteOrder.BIG_ENDIAN).short.toInt() and 0xFFFF
+            if (msgType == AAPConstants.MSG_CHANNEL_OPEN_REQUEST) {
+                Log.i(TAG, "[AAP] Ricevuto Channel Open Request su Canale Input Touch. Invio OK...")
+                sendChannelOpenResponse(AAPConstants.CHANNEL_INPUT, 0)
+            }
+        }
     }
 
     private fun sendVersionRequest(major: Int, minor: Int) {
@@ -178,20 +214,49 @@ class AAPHeadUnitClient {
         }.array()
 
         AAPPacket(AAPConstants.CHANNEL_CONTROL, AAPConstants.FLAG_FIRST or AAPConstants.FLAG_LAST, payload).writeTo(out)
-        Log.i(TAG, "[AAP] Inviato VersionRequest pulito di 4 bytes ($major.$minor)")
+        Log.i(TAG, "[AAP] Inviato VersionRequest ($major.$minor)")
+    }
+
+    private fun sendSSLHandshake(tlsBytes: ByteArray) {
+        val out = outputStream ?: return
+        val payload = ByteBuffer.allocate(2 + tlsBytes.size).apply {
+            order(ByteOrder.BIG_ENDIAN)
+            putShort(AAPConstants.MSG_SSL_HANDSHAKE.toShort())
+            put(tlsBytes)
+        }.array()
+
+        AAPPacket(AAPConstants.CHANNEL_CONTROL, AAPConstants.FLAG_FIRST or AAPConstants.FLAG_LAST or AAPConstants.FLAG_CONTROL, payload).writeTo(out)
+        Log.d(TAG, "[AAP] Inviato pacchetto SSL Handshake (${payload.size} bytes)")
+    }
+
+    private fun sendAuthComplete() {
+        val out = outputStream ?: return
+        val payload = ByteBuffer.allocate(4).apply {
+            order(ByteOrder.BIG_ENDIAN)
+            putShort(AAPConstants.MSG_AUTH_COMPLETE.toShort())
+            putShort(0) // Status OK
+        }.array()
+
+        val encrypted = sslEngine?.encrypt(payload) ?: payload
+        AAPPacket(AAPConstants.CHANNEL_CONTROL, AAPConstants.FLAG_FIRST or AAPConstants.FLAG_LAST, encrypted).writeTo(out)
     }
 
     private fun sendServiceDiscovery() {
         val out = outputStream ?: return
-        val payload = AAPProtobufBuilder.buildServiceDiscoveryResponse()
+        val plainPayload = AAPProtobufBuilder.buildServiceDiscoveryResponse()
+        val payload = sslEngine?.encrypt(plainPayload) ?: plainPayload
+
         AAPPacket(AAPConstants.CHANNEL_CONTROL, AAPConstants.FLAG_FIRST or AAPConstants.FLAG_LAST, payload).writeTo(out)
-        Log.i(TAG, "[AAP] Inviato ServiceDiscoveryResponse Protobuf a Google Maps / Android Auto.")
+        Log.i(TAG, "[AAP] Inviato ServiceDiscoveryResponse Protobuf a Google.")
     }
 
-    private fun sendChannelOpenResponse() {
+    private fun sendChannelOpenResponse(channel: Int, status: Int = 0) {
         val out = outputStream ?: return
-        val payload = AAPProtobufBuilder.buildChannelOpenResponse(0)
-        AAPPacket(AAPConstants.CHANNEL_CONTROL, AAPConstants.FLAG_FIRST or AAPConstants.FLAG_LAST, payload).writeTo(out)
+        val plainPayload = AAPProtobufBuilder.buildChannelOpenResponse(status)
+        val payload = if (channel == AAPConstants.CHANNEL_CONTROL) (sslEngine?.encrypt(plainPayload) ?: plainPayload) else plainPayload
+
+        AAPPacket(channel, AAPConstants.FLAG_FIRST or AAPConstants.FLAG_LAST, payload).writeTo(out)
+        Log.i(TAG, "[AAP] Inviato ChannelOpenResponse (OK) per canale $channel.")
     }
 
     private fun sendPingResponse() {
@@ -247,6 +312,7 @@ class AAPHeadUnitClient {
         socket = null
         inputStream = null
         outputStream = null
+        sslEngine = null
     }
 
     fun disconnect() {
