@@ -21,29 +21,31 @@ jobs:
       with:
         java-version: '17'
         distribution: 'temurin'
+        cache: 'gradle'
 
-    - name: Setup Gradle
+    - name: Setup Gradle Cache & Tooling
       uses: gradle/actions/setup-gradle@v3
+      with:
+        gradle-version: '8.6'
+        cache-read-only: false
 
-    - name: Generate Gradle Wrapper & Build APK
+    - name: Fast Compile APK
       run: |
-        gradle wrapper --gradle-version 8.6
-        chmod +x gradlew
-        ./gradlew assembleDebug --stacktrace
+        gradle assembleDebug --parallel --build-cache --no-daemon
 
-    - name: Upload APK as Artifact
+    - name: Upload APK Artifact
       uses: actions/upload-artifact@v4
       with:
         name: TeslaAutoStreamer-APK
         path: app/build/outputs/apk/debug/app-debug.apk
 
-    - name: Create Release with APK Download
+    - name: Publish Instant Release
       uses: softprops/action-gh-release@v2
       if: startsWith(github.ref, 'refs/tags/') || github.ref == 'refs/heads/main'
       with:
         tag_name: latest
-        name: "Tesla Auto Streamer v1.0 (APK)"
-        body: "APK nativo per Android Auto su Tesla Model 3 (Intel Atom MCU2 anti-crash)."
+        name: "Tesla Auto Streamer (Ultima Versione)"
+        body: "APK nativo puro Android Auto per Tesla Model 3."
         files: app/build/outputs/apk/debug/app-debug.apk
         draft: false
         prerelease: false
