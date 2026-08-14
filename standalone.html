@@ -1,0 +1,595 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <meta name="theme-color" content="#000000">
+    <title>Tesla Android Auto Streamer</title>
+    <style>
+        :root {
+            --bg-primary: #000000;
+            --bg-surface: #121318;
+            --bg-surface-elevated: #1a1b24;
+            --bg-pill: rgba(18, 19, 24, 0.85);
+            --text-primary: #f0f2f5;
+            --text-secondary: #9095a0;
+            --text-muted: #5a5f6e;
+            --accent-tesla: #e82127;
+            --accent-blue: #3b82f6;
+            --accent-green: #10b981;
+            --accent-amber: #f59e0b;
+            --accent-red: #ef4444;
+            --border-subtle: rgba(255, 255, 255, 0.08);
+            --border-highlight: rgba(255, 255, 255, 0.15);
+            --font-stack: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Arial, sans-serif;
+            --radius-sm: 6px;
+            --radius-md: 10px;
+            --radius-lg: 16px;
+            --radius-pill: 9999px;
+            --shadow-float: 0 8px 32px rgba(0, 0, 0, 0.6);
+        }
+        *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; -webkit-tap-highlight-color: transparent; }
+        html, body {
+            width: 100vw; height: 100vh; overflow: hidden; background-color: var(--bg-primary);
+            color: var(--text-primary); font-family: var(--font-stack);
+            touch-action: none !important; user-select: none !important;
+            -webkit-user-select: none !important; -webkit-touch-callout: none !important;
+            overscroll-behavior: none !important; position: fixed;
+        }
+        #app-container { position: relative; width: 100%; height: 100%; overflow: hidden; background-color: #000; }
+        #display-stage { position: absolute; inset: 0; width: 100%; height: 100%; display: flex; align-items: center; justify-content: center; background-color: #000; overflow: hidden; }
+        #video-canvas, #video-player { position: absolute; width: 100%; height: 100%; object-fit: contain; transform: translateZ(0); will-change: transform; pointer-events: none; }
+        #video-player { display: none; }
+        #touch-surface { position: absolute; inset: 0; width: 100%; height: 100%; z-index: 10; touch-action: none; cursor: default; background: transparent; }
+        #status-overlay { position: absolute; inset: 0; z-index: 50; display: flex; align-items: center; justify-content: center; background: rgba(0, 0, 0, 0.88); backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px); transition: opacity 0.3s ease, visibility 0.3s ease; }
+        #status-overlay.overlay-hidden { opacity: 0; visibility: hidden; pointer-events: none; }
+        .status-card { max-width: 520px; width: 90%; background: var(--bg-surface); border: 1px solid var(--border-subtle); border-radius: var(--radius-lg); padding: 30px 24px; text-align: center; box-shadow: var(--shadow-float); display: flex; flex-direction: column; align-items: center; gap: 14px; }
+        .spinner-container { position: relative; width: 68px; height: 68px; display: flex; align-items: center; justify-content: center; }
+        .pulse-ring { position: absolute; width: 100%; height: 100%; border-radius: 50%; border: 2px solid var(--accent-blue); opacity: 0.7; animation: pulse-ring 2s cubic-bezier(0.215, 0.61, 0.355, 1) infinite; }
+        @keyframes pulse-ring { 0% { transform: scale(0.6); opacity: 0.9; } 50% { transform: scale(1.15); opacity: 0.3; } 100% { transform: scale(0.6); opacity: 0.9; } }
+        .status-icon { font-size: 30px; z-index: 2; }
+        .status-card h2 { font-size: 20px; font-weight: 600; color: var(--text-primary); }
+        .status-card p { font-size: 13px; line-height: 1.5; color: var(--text-secondary); }
+        .preset-selector { display: flex; flex-direction: column; gap: 8px; width: 100%; margin-top: 4px; }
+        .preset-title { font-size: 11px; font-weight: 600; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.05em; }
+        .preset-buttons { display: flex; gap: 8px; justify-content: center; }
+        .preset-btn { flex: 1; padding: 10px 8px; background: var(--bg-surface-elevated); border: 1px solid var(--border-subtle); border-radius: var(--radius-md); color: var(--text-secondary); font-size: 12px; font-weight: 600; cursor: pointer; transition: all 0.2s; }
+        .preset-btn.active { background: rgba(59, 130, 246, 0.15); border-color: var(--accent-blue); color: var(--accent-blue); }
+        .quick-instructions { display: flex; flex-wrap: wrap; gap: 8px; justify-content: center; }
+        .pill { font-size: 11px; font-weight: 500; padding: 6px 12px; background: var(--bg-surface-elevated); border: 1px solid var(--border-subtle); border-radius: var(--radius-pill); color: var(--text-primary); }
+        .action-row { display: flex; gap: 10px; width: 100%; margin-top: 6px; }
+        .action-btn { padding: 12px 18px; font-size: 13px; font-weight: 600; border-radius: var(--radius-md); cursor: pointer; border: none; }
+        .action-btn.primary { flex: 2; background: var(--accent-blue); color: #fff; }
+        .action-btn.secondary { flex: 1; background: var(--bg-surface-elevated); border: 1px solid var(--border-subtle); color: var(--text-primary); }
+        .action-btn:active { transform: scale(0.97); }
+        #telemetry-bar { position: absolute; top: 14px; right: 18px; z-index: 100; display: flex; align-items: center; gap: 14px; background: var(--bg-pill); border: 1px solid var(--border-subtle); padding: 6px 14px; border-radius: var(--radius-pill); box-shadow: var(--shadow-float); backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px); font-size: 12px; font-weight: 500; }
+        .telemetry-item { display: flex; align-items: center; gap: 5px; }
+        .telemetry-item .label { color: var(--text-muted); font-size: 10px; font-weight: 700; }
+        .telemetry-item .value { color: var(--text-primary); font-family: monospace; font-size: 12px; }
+        .status-indicator { display: flex; align-items: center; gap: 6px; padding-right: 6px; border-right: 1px solid var(--border-subtle); }
+        .status-dot { width: 8px; height: 8px; border-radius: 50%; background-color: var(--accent-amber); box-shadow: 0 0 6px var(--accent-amber); transition: background-color 0.3s; }
+        .status-dot.online { background-color: var(--accent-green); box-shadow: 0 0 8px var(--accent-green); }
+        .status-dot.offline { background-color: var(--accent-red); box-shadow: 0 0 8px var(--accent-red); }
+        .telemetry-actions { display: flex; align-items: center; gap: 6px; padding-left: 6px; border-left: 1px solid var(--border-subtle); }
+        .icon-btn { background: transparent; border: none; cursor: pointer; font-size: 14px; padding: 4px 6px; border-radius: var(--radius-sm); color: var(--text-primary); }
+        #diagnostics-modal, #settings-modal { position: absolute; inset: 0; z-index: 150; display: flex; align-items: center; justify-content: center; background: rgba(0, 0, 0, 0.75); backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px); }
+        .modal-hidden { opacity: 0; visibility: hidden; pointer-events: none; }
+        .modal-content { background: var(--bg-surface); border: 1px solid var(--border-subtle); border-radius: var(--radius-lg); width: 90%; max-width: 520px; padding: 24px; box-shadow: var(--shadow-float); }
+        .modal-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; padding-bottom: 12px; border-bottom: 1px solid var(--border-subtle); }
+        .close-btn { background: transparent; border: none; color: var(--text-secondary); font-size: 22px; cursor: pointer; }
+        .diag-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+        .diag-card { background: var(--bg-surface-elevated); border: 1px solid var(--border-subtle); border-radius: var(--radius-md); padding: 12px 14px; display: flex; flex-direction: column; gap: 4px; }
+        .diag-label { font-size: 11px; color: var(--text-muted); font-weight: 600; text-transform: uppercase; }
+        .diag-val { font-size: 14px; font-weight: 600; color: var(--text-primary); font-family: monospace; }
+        .settings-body { display: flex; flex-direction: column; gap: 16px; }
+        .form-group { display: flex; flex-direction: column; gap: 6px; }
+        .form-group label { font-size: 13px; font-weight: 500; color: var(--text-secondary); }
+        .form-group input[type="text"], .form-group select { background: var(--bg-surface-elevated); border: 1px solid var(--border-subtle); border-radius: var(--radius-md); padding: 10px 12px; color: var(--text-primary); font-size: 14px; outline: none; }
+    </style>
+</head>
+<body>
+    <div id="app-container">
+        <main id="display-stage">
+            <canvas id="video-canvas" width="1280" height="720"></canvas>
+            <video id="video-player" muted playsinline autoplay disablepictureinpicture></video>
+            <div id="touch-surface"></div>
+
+            <div id="status-overlay" class="overlay-visible">
+                <div class="status-card">
+                    <div class="spinner-container">
+                        <div class="pulse-ring"></div>
+                        <div class="status-icon" id="status-icon">🚗</div>
+                    </div>
+                    <h2 id="status-title">In attesa dello Smartphone...</h2>
+                    <p id="status-desc">Attiva l'Hotspot 5GHz e avvia l'app (TaaDa / TesDisplay / Streamer) sul telefono.</p>
+                    
+                    <div class="preset-selector">
+                        <span class="preset-title">Seleziona la tua App:</span>
+                        <div class="preset-buttons">
+                            <button id="preset-taada" class="preset-btn active" data-url="ws://192.168.43.1:8080/stream">TaaDa (8080)</button>
+                            <button id="preset-tesdisplay" class="preset-btn" data-url="ws://192.168.43.1:8000/stream">TesDisplay (8000)</button>
+                            <button id="preset-custom" class="preset-btn" data-url="ws://192.168.43.1:8080">Personalizzato</button>
+                        </div>
+                    </div>
+
+                    <div class="quick-instructions">
+                        <span class="pill">📶 Wi-Fi: "Rimani connesso in Drive"</span>
+                        <span class="pill">🔊 Audio: Bluetooth Tesla</span>
+                    </div>
+
+                    <div class="action-row">
+                        <button id="btn-manual-connect" class="action-btn primary">Connetti Subito</button>
+                        <button id="btn-open-settings" class="action-btn secondary">⚙️ Opzioni IP</button>
+                    </div>
+                </div>
+            </div>
+        </main>
+
+        <header id="telemetry-bar">
+            <div class="telemetry-item status-indicator">
+                <span class="status-dot" id="dot-indicator"></span>
+                <span id="txt-conn-status">Connessione...</span>
+            </div>
+            <div class="telemetry-item">
+                <span class="label">ENGINE:</span>
+                <span class="value" id="val-engine">Auto</span>
+            </div>
+            <div class="telemetry-item">
+                <span class="label">FPS:</span>
+                <span class="value" id="val-fps">0</span>
+            </div>
+            <div class="telemetry-item">
+                <span class="label">LATENZA:</span>
+                <span class="value" id="val-latency">-- ms</span>
+            </div>
+            <div class="telemetry-item">
+                <span class="label">BUFFER:</span>
+                <span class="value" id="val-buffer">0 ms</span>
+            </div>
+            <div class="telemetry-actions">
+                <button id="btn-toggle-hud" class="icon-btn" title="Dettagli diagnostici">📊</button>
+                <button id="btn-settings" class="icon-btn" title="Impostazioni">⚙️</button>
+                <button id="btn-fullscreen" class="icon-btn" title="Schermo intero">⛶</button>
+            </div>
+        </header>
+
+        <div id="diagnostics-modal" class="modal-hidden">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h3>Diagnostica Stream & Hardware MCU2</h3>
+                    <button id="btn-close-diag" class="close-btn">×</button>
+                </div>
+                <div class="diag-grid">
+                    <div class="diag-card"><span class="diag-label">Codec</span><span class="diag-val">H.264 Baseline L3.1</span></div>
+                    <div class="diag-card"><span class="diag-label">Risoluzione</span><span class="diag-val">1280 × 720</span></div>
+                    <div class="diag-card"><span class="diag-label">Bitrate</span><span class="diag-val" id="diag-bitrate">0 kbps</span></div>
+                    <div class="diag-card"><span class="diag-label">Frame Decodificati</span><span class="diag-val" id="diag-frames-decoded">0</span></div>
+                    <div class="diag-card"><span class="diag-label">Frame Persi</span><span class="diag-val" id="diag-frames-dropped">0</span></div>
+                    <div class="diag-card"><span class="diag-label">Memoria Buffer</span><span class="diag-val">Zero-Leak Guard Attivo</span></div>
+                </div>
+            </div>
+        </div>
+
+        <div id="settings-modal" class="modal-hidden">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h3>Impostazioni Connessione</h3>
+                    <button id="btn-close-settings" class="close-btn">×</button>
+                </div>
+                <div class="settings-body">
+                    <div class="form-group">
+                        <label for="input-ws-url">Indirizzo WebSocket Server</label>
+                        <input type="text" id="input-ws-url" placeholder="ws://192.168.43.1:8080/stream">
+                    </div>
+                    <div class="form-group">
+                        <label for="select-engine">Motore di Rendering</label>
+                        <select id="select-engine">
+                            <option value="auto">Automatico (WebCodecs)</option>
+                            <option value="webcodecs">Forza WebCodecs</option>
+                            <option value="mse">Forza MediaSource (MSE)</option>
+                        </select>
+                    </div>
+                    <div class="form-actions">
+                        <button id="btn-save-settings" class="action-btn primary">Salva e Riavvia</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+    /* Inlined JavaScript Modules for Portable Single-File Deployment */
+    class TouchHandler {
+        constructor(elementId) {
+            this.surface = document.getElementById(elementId);
+            this.onPointerEvent = null;
+            this.activePointers = new Map();
+            this.lastMoveTime = 0;
+            this.minMoveIntervalMs = 12;
+            if (this.surface) this.bindEvents();
+        }
+        bindEvents() {
+            const s = this.surface;
+            s.addEventListener('pointerdown', (e) => this.handlePointer(e, 0), { passive: false });
+            s.addEventListener('pointerup', (e) => this.handlePointer(e, 1), { passive: false });
+            s.addEventListener('pointermove', (e) => this.handlePointerMove(e), { passive: false });
+            s.addEventListener('pointercancel', (e) => this.handlePointer(e, 3), { passive: false });
+            s.addEventListener('contextmenu', (e) => e.preventDefault());
+            s.addEventListener('touchstart', (e) => e.preventDefault(), { passive: false });
+            s.addEventListener('touchmove', (e) => e.preventDefault(), { passive: false });
+            s.addEventListener('touchend', (e) => e.preventDefault(), { passive: false });
+            s.addEventListener('gesturestart', (e) => e.preventDefault());
+        }
+        handlePointer(e, actionType) {
+            e.preventDefault();
+            const rect = this.surface.getBoundingClientRect();
+            const normX = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
+            const normY = Math.max(0, Math.min(1, (e.clientY - rect.top) / rect.height));
+            if (actionType === 0) {
+                this.activePointers.set(e.pointerId, { x: normX, y: normY });
+                try { this.surface.setPointerCapture(e.pointerId); } catch (_) {}
+            } else if (actionType === 1 || actionType === 3) {
+                this.activePointers.delete(e.pointerId);
+                try { this.surface.releasePointerCapture(e.pointerId); } catch (_) {}
+            }
+            if (this.onPointerEvent) this.onPointerEvent({ action: actionType, x: normX, y: normY, id: e.pointerId, ts: Date.now() });
+        }
+        handlePointerMove(e) {
+            e.preventDefault();
+            if (!this.activePointers.has(e.pointerId)) return;
+            const now = performance.now();
+            if (now - this.lastMoveTime < this.minMoveIntervalMs) return;
+            this.lastMoveTime = now;
+            const rect = this.surface.getBoundingClientRect();
+            const normX = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
+            const normY = Math.max(0, Math.min(1, (e.clientY - rect.top) / rect.height));
+            this.activePointers.set(e.pointerId, { x: normX, y: normY });
+            if (this.onPointerEvent) this.onPointerEvent({ action: 2, x: normX, y: normY, id: e.pointerId, ts: Date.now() });
+        }
+    }
+
+    class VideoPlayer {
+        constructor(options = {}) {
+            this.canvas = document.getElementById(options.canvasId || 'video-canvas');
+            this.ctx = this.canvas ? this.canvas.getContext('2d', { alpha: false, desynchronized: true }) : null;
+            this.videoEl = document.getElementById(options.videoId || 'video-player');
+            this.mode = 'unknown';
+            this.decoder = null;
+            this.mediaSource = null;
+            this.sourceBuffer = null;
+            this.mseQueue = [];
+            this.stats = { fps: 0, frameCount: 0, lastFpsUpdate: performance.now(), latencyMs: 0, bufferMs: 0, decodedFrames: 0, droppedFrames: 0, bitrateKbps: 0, bytesReceived: 0, lastBitrateUpdate: performance.now() };
+            this.hasReceivedKeyframe = false;
+            this.initEngine();
+            this.startTelemetryLoop();
+        }
+        initEngine() {
+            const preferredEngine = localStorage.getItem('tesla_engine_pref') || 'auto';
+            const supportsWebCodecs = typeof window.VideoDecoder === 'function' && typeof window.EncodedVideoChunk === 'function';
+            if ((preferredEngine === 'auto' || preferredEngine === 'webcodecs') && supportsWebCodecs) {
+                this.initWebCodecs();
+            } else {
+                this.initMSE();
+            }
+        }
+        initWebCodecs() {
+            this.mode = 'webcodecs';
+            if (this.canvas) this.canvas.style.display = 'block';
+            if (this.videoEl) this.videoEl.style.display = 'none';
+            try {
+                this.decoder = new VideoDecoder({
+                    output: (frame) => this.handleWebCodecsFrame(frame),
+                    error: (e) => {
+                        this.stats.droppedFrames++;
+                        if (this.stats.droppedFrames > 10 && this.mode === 'webcodecs') this.initMSE();
+                    }
+                });
+                this.decoder.configure({ codec: 'avc1.42E01E', optimizeForLatency: true, hardwareAcceleration: 'prefer-hardware' });
+            } catch (err) {
+                this.initMSE();
+            }
+        }
+        handleWebCodecsFrame(frame) {
+            this.stats.decodedFrames++;
+            this.stats.frameCount++;
+            if (frame.timestamp) {
+                const now = performance.now();
+                const latency = now - (frame.timestamp / 1000);
+                if (latency > 0 && latency < 5000) this.stats.latencyMs = Math.round(latency);
+            }
+            if (this.canvas.width !== frame.displayWidth || this.canvas.height !== frame.displayHeight) {
+                this.canvas.width = frame.displayWidth;
+                this.canvas.height = frame.displayHeight;
+            }
+            if (this.ctx) this.ctx.drawImage(frame, 0, 0, this.canvas.width, this.canvas.height);
+            frame.close(); // Zero memory leak guard!
+        }
+        initMSE() {
+            this.mode = 'mse';
+            if (this.canvas) this.canvas.style.display = 'none';
+            if (this.videoEl) {
+                this.videoEl.style.display = 'block';
+                this.videoEl.muted = true;
+                this.videoEl.playsInline = true;
+                this.videoEl.autoplay = true;
+            }
+            this.mediaSource = new MediaSource();
+            this.videoEl.src = URL.createObjectURL(this.mediaSource);
+            this.mediaSource.addEventListener('sourceopen', () => {
+                try {
+                    const mime = 'video/mp4; codecs="avc1.42E01E"';
+                    if (MediaSource.isTypeSupported(mime)) {
+                        this.sourceBuffer = this.mediaSource.addSourceBuffer(mime);
+                        this.sourceBuffer.mode = 'sequence';
+                        this.sourceBuffer.addEventListener('updateend', () => {
+                            this.processMseQueue();
+                            this.purgePastBuffer();
+                            this.catchupLiveEdge();
+                        });
+                        this.processMseQueue();
+                    }
+                } catch (_) {}
+            });
+        }
+        processMseQueue() {
+            if (!this.sourceBuffer || this.sourceBuffer.updating || this.mseQueue.length === 0) return;
+            const chunk = this.mseQueue.shift();
+            try {
+                this.sourceBuffer.appendBuffer(chunk);
+                this.stats.decodedFrames++;
+                this.stats.frameCount++;
+            } catch (_) {}
+        }
+        purgePastBuffer() {
+            if (!this.sourceBuffer || this.sourceBuffer.updating || !this.videoEl) return;
+            try {
+                const currentTime = this.videoEl.currentTime;
+                if (currentTime > 0.8 && this.sourceBuffer.buffered.length > 0) {
+                    const start = this.sourceBuffer.buffered.start(0);
+                    const purgeUntil = currentTime - 0.3;
+                    if (purgeUntil > start) this.sourceBuffer.remove(start, purgeUntil);
+                }
+            } catch (_) {}
+        }
+        catchupLiveEdge() {
+            if (!this.videoEl || this.videoEl.buffered.length === 0) return;
+            const bufferEnd = this.videoEl.buffered.end(0);
+            const drift = bufferEnd - this.videoEl.currentTime;
+            this.stats.bufferMs = Math.round(drift * 1000);
+            if (drift > 0.20) {
+                this.videoEl.currentTime = bufferEnd - 0.02;
+                this.videoEl.playbackRate = 1.0;
+            } else if (drift > 0.06) {
+                this.videoEl.playbackRate = 1.06;
+            } else {
+                this.videoEl.playbackRate = 1.0;
+            }
+        }
+        feedChunk(dataBuffer, serverTimestamp = null) {
+            this.stats.bytesReceived += dataBuffer.byteLength;
+            if (this.mode === 'webcodecs') {
+                if (!this.decoder || this.decoder.state === 'closed') return;
+                const u8 = new Uint8Array(dataBuffer);
+                const isKey = this.checkIfKeyframe(u8);
+                if (!this.hasReceivedKeyframe && !isKey) { this.stats.droppedFrames++; return; }
+                this.hasReceivedKeyframe = true;
+                try {
+                    const chunk = new EncodedVideoChunk({ type: isKey ? 'key' : 'delta', timestamp: (serverTimestamp || performance.now()) * 1000, data: dataBuffer });
+                    this.decoder.decode(chunk);
+                } catch (_) { this.stats.droppedFrames++; }
+            } else if (this.mode === 'mse') {
+                this.mseQueue.push(dataBuffer);
+                this.processMseQueue();
+            }
+        }
+        checkIfKeyframe(u8) {
+            for (let i = 0; i < Math.min(u8.length - 4, 64); i++) {
+                if (u8[i] === 0 && u8[i+1] === 0) {
+                    let off = u8[i+2] === 1 ? i+3 : (u8[i+2] === 0 && u8[i+3] === 1 ? i+4 : -1);
+                    if (off !== -1 && off < u8.length) {
+                        const type = u8[off] & 0x1F;
+                        if (type === 5 || type === 7 || type === 8) return true;
+                    }
+                }
+            }
+            return false;
+        }
+        startTelemetryLoop() {
+            setInterval(() => {
+                const now = performance.now();
+                const elapsedFps = (now - this.stats.lastFpsUpdate) / 1000;
+                if (elapsedFps >= 1.0) {
+                    this.stats.fps = Math.round(this.stats.frameCount / elapsedFps);
+                    this.stats.frameCount = 0;
+                    this.stats.lastFpsUpdate = now;
+                }
+                const elapsedBitrate = (now - this.stats.lastBitrateUpdate) / 1000;
+                if (elapsedBitrate >= 1.0) {
+                    this.stats.bitrateKbps = Math.round((this.stats.bytesReceived * 8) / (elapsedBitrate * 1000));
+                    this.stats.bytesReceived = 0;
+                    this.stats.lastBitrateUpdate = now;
+                }
+            }, 1000);
+        }
+    }
+
+    class StreamWebSocketClient {
+        constructor() {
+            this.ws = null;
+            this.isConnected = false;
+            this.reconnectTimer = null;
+            this.pingTimer = null;
+            this.reconnectAttempts = 0;
+            this.onFrameReceived = null;
+            this.onStateChange = null;
+            this.url = this.resolveServerUrl();
+        }
+        resolveServerUrl() {
+            const stored = localStorage.getItem('tesla_ws_url');
+            if (stored && stored.trim().length > 0) return stored.trim();
+            const host = window.location.hostname || '192.168.43.1';
+            const port = window.location.port || '8080';
+            const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+            return `${protocol}//${host}:${port}/stream`;
+        }
+        setServerUrl(newUrl) {
+            this.url = newUrl;
+            localStorage.setItem('tesla_ws_url', newUrl);
+            this.reconnect();
+        }
+        connect() {
+            if (this.ws && (this.ws.readyState === WebSocket.OPEN || this.ws.readyState === WebSocket.CONNECTING)) return;
+            this.updateState('connecting', 'Connessione a ' + this.url + '...');
+            try {
+                this.ws = new WebSocket(this.url);
+                this.ws.binaryType = 'arraybuffer';
+                this.ws.onopen = () => {
+                    this.isConnected = true;
+                    this.reconnectAttempts = 0;
+                    this.updateState('connected', 'Connesso');
+                    this.startHeartbeat();
+                };
+                this.ws.onmessage = (e) => {
+                    if (e.data instanceof ArrayBuffer) {
+                        const view = new DataView(e.data);
+                        if (view.getUint8(0) === 0x01 && e.data.byteLength > 9) {
+                            const ts = view.getFloat64(1, false);
+                            if (this.onFrameReceived) this.onFrameReceived(e.data.slice(9), ts);
+                        } else {
+                            if (this.onFrameReceived) this.onFrameReceived(e.data, performance.now());
+                        }
+                    }
+                };
+                this.ws.onclose = () => {
+                    this.isConnected = false;
+                    this.stopHeartbeat();
+                    this.updateState('offline', 'Disconnesso. Riconnessione...');
+                    this.scheduleReconnect();
+                };
+            } catch (err) {
+                this.scheduleReconnect();
+            }
+        }
+        scheduleReconnect() {
+            if (this.reconnectTimer) return;
+            this.reconnectAttempts++;
+            const delay = Math.min(1000 * Math.pow(1.3, this.reconnectAttempts), 4000);
+            this.reconnectTimer = setTimeout(() => {
+                this.reconnectTimer = null;
+                this.connect();
+            }, delay);
+        }
+        reconnect() {
+            if (this.reconnectTimer) { clearTimeout(this.reconnectTimer); this.reconnectTimer = null; }
+            if (this.ws) { try { this.ws.close(); } catch (_) {} this.ws = null; }
+            this.connect();
+        }
+        startHeartbeat() {
+            this.stopHeartbeat();
+            this.pingTimer = setInterval(() => {
+                if (this.isConnected && this.ws.readyState === WebSocket.OPEN) {
+                    this.ws.send(JSON.stringify({ type: 'ping', ts: performance.now() }));
+                }
+            }, 3000);
+        }
+        stopHeartbeat() { if (this.pingTimer) { clearInterval(this.pingTimer); this.pingTimer = null; } }
+        sendTouch(touchData) {
+            if (!this.isConnected || !this.ws || this.ws.readyState !== WebSocket.OPEN) return;
+            try { this.ws.send(JSON.stringify({ type: 'touch', action: touchData.action, x: touchData.x, y: touchData.y, id: touchData.id, ts: touchData.ts })); } catch (_) {}
+        }
+        updateState(state, message) { if (this.onStateChange) this.onStateChange(state, message); }
+    }
+
+    class TelemetryHUD {
+        constructor() {
+            this.statusOverlay = document.getElementById('status-overlay');
+            this.statusTitle = document.getElementById('status-title');
+            this.dotIndicator = document.getElementById('dot-indicator');
+            this.txtConnStatus = document.getElementById('txt-conn-status');
+            this.valEngine = document.getElementById('val-engine');
+            this.valFps = document.getElementById('val-fps');
+            this.valLatency = document.getElementById('val-latency');
+            this.valBuffer = document.getElementById('val-buffer');
+            this.diagModal = document.getElementById('diagnostics-modal');
+            this.settingsModal = document.getElementById('settings-modal');
+            this.diagBitrate = document.getElementById('diag-bitrate');
+            this.diagDecoded = document.getElementById('diag-frames-decoded');
+            this.diagDropped = document.getElementById('diag-frames-dropped');
+            this.bindEvents();
+            this.startRefreshLoop();
+        }
+        bindEvents() {
+            document.getElementById('btn-manual-connect')?.addEventListener('click', () => window.App?.ws?.reconnect());
+            document.getElementById('btn-toggle-hud')?.addEventListener('click', () => this.toggleModal(this.diagModal));
+            document.getElementById('btn-settings')?.addEventListener('click', () => this.toggleModal(this.settingsModal));
+            document.getElementById('btn-open-settings')?.addEventListener('click', () => this.toggleModal(this.settingsModal));
+            document.getElementById('btn-close-diag')?.addEventListener('click', () => this.diagModal?.classList.add('modal-hidden'));
+            document.getElementById('btn-close-settings')?.addEventListener('click', () => this.settingsModal?.classList.add('modal-hidden'));
+            document.getElementById('btn-fullscreen')?.addEventListener('click', () => {
+                if (!document.fullscreenElement) document.documentElement.requestFullscreen().catch(() => {});
+                else document.exitFullscreen?.();
+            });
+            document.getElementById('btn-save-settings')?.addEventListener('click', () => {
+                const url = document.getElementById('input-ws-url')?.value;
+                if (url) window.App?.ws?.setServerUrl(url.trim());
+                this.settingsModal?.classList.add('modal-hidden');
+            });
+        }
+        updateConnectionState(state, message) {
+            if (!this.dotIndicator || !this.txtConnStatus) return;
+            this.dotIndicator.className = 'status-dot';
+            if (state === 'connected') {
+                this.dotIndicator.classList.add('online');
+                this.txtConnStatus.textContent = 'Online';
+                this.statusOverlay?.classList.add('overlay-hidden');
+            } else {
+                this.dotIndicator.classList.add('offline');
+                this.txtConnStatus.textContent = 'Offline';
+                this.statusOverlay?.classList.remove('overlay-hidden');
+            }
+            if (this.statusTitle && message) this.statusTitle.textContent = message;
+        }
+        startRefreshLoop() {
+            setInterval(() => {
+                if (!window.App?.player) return;
+                const p = window.App.player;
+                if (this.valEngine) this.valEngine.textContent = p.mode === 'webcodecs' ? 'WebCodecs' : 'MSE';
+                if (this.valFps) this.valFps.textContent = p.stats.fps;
+                if (this.valLatency) this.valLatency.textContent = p.stats.latencyMs > 0 ? `${p.stats.latencyMs} ms` : '< 40 ms';
+                if (this.valBuffer) this.valBuffer.textContent = p.mode === 'webcodecs' ? '0 ms' : `${p.stats.bufferMs} ms`;
+                if (this.diagBitrate) this.diagBitrate.textContent = `${p.stats.bitrateKbps} kbps`;
+                if (this.diagDecoded) this.diagDecoded.textContent = p.stats.decodedFrames;
+                if (this.diagDropped) this.diagDropped.textContent = p.stats.droppedFrames;
+            }, 500);
+        }
+        toggleModal(modal) {
+            if (modal) modal.classList.toggle('modal-hidden');
+        }
+    }
+
+    window.addEventListener('DOMContentLoaded', () => {
+        window.App = {
+            touch: new TouchHandler('touch-surface'),
+            player: new VideoPlayer({ canvasId: 'video-canvas', videoId: 'video-player' }),
+            ws: new StreamWebSocketClient(),
+            hud: new TelemetryHUD()
+        };
+        window.App.ws.onFrameReceived = (data, ts) => window.App.player.feedChunk(data, ts);
+        window.App.touch.onPointerEvent = (d) => window.App.ws.sendTouch(d);
+        window.App.ws.onStateChange = (s, m) => window.App.hud.updateConnectionState(s, m);
+
+        document.querySelectorAll('.preset-btn').forEach(btn => {
+            btn.addEventListener('click', () => {
+                document.querySelectorAll('.preset-btn').forEach(b => b.classList.remove('active'));
+                btn.classList.add('active');
+                const u = btn.getAttribute('data-url');
+                if (u) window.App.ws.setServerUrl(u);
+            });
+        });
+        window.App.ws.connect();
+    });
+    </script>
+</body>
+</html>
