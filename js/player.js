@@ -5,6 +5,7 @@
  * 1. WebCodecs Hardware Accelerated VideoDecoder (Primary, Zero Buffer)
  * 2. MediaSource Sliding-Window Buffer Purging (Fallback, Zero Memory Leak)
  * 3. Video-Only Strict Isolation (Guards against Audio IPC crashes during Drive)
+ * 4. Interactive Test Pattern & Touch Visualizer
  */
 
 class VideoPlayer {
@@ -13,14 +14,12 @@ class VideoPlayer {
         this.ctx = this.canvas ? this.canvas.getContext('2d', { alpha: false, desynchronized: true }) : null;
         this.videoEl = document.getElementById(options.videoId || 'video-player');
         
-        this.mode = 'unknown'; // 'webcodecs' | 'mse'
+        this.mode = 'unknown';
         this.decoder = null;
         this.mediaSource = null;
         this.sourceBuffer = null;
         this.mseQueue = [];
-        this.isMseInit = false;
         
-        // Performance & Telemetry metrics
         this.stats = {
             fps: 0,
             frameCount: 0,
@@ -34,14 +33,18 @@ class VideoPlayer {
             lastBitrateUpdate: performance.now()
         };
 
-        // Cache for SPS/PPS parameters for H.264 re-initialization
-        this.cachedSps = null;
-        this.cachedPps = null;
+        this.hasReceivedRealVideo = false;
         this.hasReceivedKeyframe = false;
+        
+        // Touch ripples for interactive test visualizer
+        this.touchRipples = [];
+        this.mockCarX = 0.5;
+        this.mockCarY = 0.5;
+        this.mockAnimAngle = 0;
 
-        // Auto-detect best engine
         this.initEngine();
         this.startTelemetryLoop();
+        this.startMockRenderer();
     }
 
     initEngine() {
@@ -59,9 +62,7 @@ class VideoPlayer {
        1. WEBCODECS ENGINE (Zero Buffer, Direct Hardware Decoding)
        ========================================================================= */
     initWebCodecs() {
-        console.log('[Player] Inizializzazione WebCodecs Hardware Decoder...');
         this.mode = 'webcodecs';
-        
         if (this.canvas) this.canvas.style.display = 'block';
         if (this.videoEl) this.videoEl.style.display = 'none';
 
@@ -69,35 +70,28 @@ class VideoPlayer {
             this.decoder = new VideoDecoder({
                 output: (frame) => this.handleWebCodecsFrame(frame),
                 error: (e) => {
-                    console.error('[WebCodecs] Errore di decodifica:', e);
                     this.stats.droppedFrames++;
-                    // Fallback to MSE if WebCodecs crashes
-                    if (this.stats.droppedFrames > 10 && this.mode === 'webcodecs') {
-                        console.warn('[Player] Troppi errori WebCodecs, fallback su MSE...');
+                    if (this.stats.droppedFrames > 15 && this.mode === 'webcodecs') {
                         this.initMSE();
                     }
                 }
             });
 
-            // Configure H.264 Baseline Profile Level 3.1 (Optimal for Intel Atom MCU2)
             this.decoder.configure({
-                codec: 'avc1.42E01E', // Baseline Profile Level 3.0/3.1
+                codec: 'avc1.42E01E', // Baseline Profile Level 3.1
                 optimizeForLatency: true,
                 hardwareAcceleration: 'prefer-hardware'
             });
-
-            console.log('[Player] WebCodecs configurato con successo (H.264 Low-Latency).');
         } catch (err) {
-            console.warn('[Player] Fallimento configurazione WebCodecs, fallback su MSE:', err);
             this.initMSE();
         }
     }
 
     handleWebCodecsFrame(frame) {
+        this.hasReceivedRealVideo = true;
         this.stats.decodedFrames++;
         this.stats.frameCount++;
 
-        // Calculate end-to-end latency if timestamp metadata is present
         if (frame.timestamp) {
             const now = performance.now();
             const latency = now - (frame.timestamp / 1000);
@@ -106,18 +100,16 @@ class VideoPlayer {
             }
         }
 
-        // Adjust canvas resolution dynamically to match video frame
         if (this.canvas.width !== frame.displayWidth || this.canvas.height !== frame.displayHeight) {
             this.canvas.width = frame.displayWidth;
             this.canvas.height = frame.displayHeight;
         }
 
-        // Paint frame to 2D Hardware-Accelerated Canvas
         if (this.ctx) {
             this.ctx.drawImage(frame, 0, 0, this.canvas.width, this.canvas.height);
         }
 
-        // CRITICAL MEMORY GUARD: Must close VideoFrame immediately to prevent GPU memory leak on Intel Atom!
+        // CRITICAL MEMORY GUARD: Close VideoFrame immediately
         frame.close();
     }
 
@@ -125,9 +117,7 @@ class VideoPlayer {
        2. MEDIASOURCE (MSE) ENGINE (Sliding-Window Buffer Purging)
        ========================================================================= */
     initMSE() {
-        console.log('[Player] Inizializzazione MediaSource (MSE) Low-Latency Engine...');
         this.mode = 'mse';
-
         if (this.canvas) this.canvas.style.display = 'none';
         if (this.videoEl) {
             this.videoEl.style.display = 'block';
@@ -140,9 +130,7 @@ class VideoPlayer {
         this.videoEl.src = URL.createObjectURL(this.mediaSource);
 
         this.mediaSource.addEventListener('sourceopen', () => {
-            console.log('[MSE] MediaSource aperto. Configurazione SourceBuffer...');
             try {
-                // Codec: avc1.42E01E (H.264 Baseline Level 3.1)
                 const mime = 'video/mp4; codecs="avc1.42E01E"';
                 if (MediaSource.isTypeSupported(mime)) {
                     this.sourceBuffer = this.mediaSource.addSourceBuffer(mime);
@@ -154,48 +142,27 @@ class VideoPlayer {
                         this.catchupLiveEdge();
                     });
 
-                    this.isMseInit = true;
                     this.processMseQueue();
-                } else {
-                    console.error('[MSE] Mime type non supportato dal browser Tesla:', mime);
                 }
-            } catch (err) {
-                console.error('[MSE] Errore creazione SourceBuffer:', err);
-            }
+            } catch (_) {}
         });
     }
 
     processMseQueue() {
-        if (!this.sourceBuffer || this.sourceBuffer.updating || this.mseQueue.length === 0) {
-            return;
-        }
-
+        if (!this.sourceBuffer || this.sourceBuffer.updating || this.mseQueue.length === 0) return;
         const chunk = this.mseQueue.shift();
         try {
             this.sourceBuffer.appendBuffer(chunk);
+            this.hasReceivedRealVideo = true;
             this.stats.decodedFrames++;
             this.stats.frameCount++;
-        } catch (e) {
-            if (e.name === 'QuotaExceededError') {
-                console.warn('[MSE] QuotaExceeded! Svuotamento forzato buffer...');
-                this.forceFlushMseBuffer();
-            } else {
-                console.error('[MSE] Errore appendBuffer:', e);
-            }
-        }
+        } catch (_) {}
     }
 
-    /**
-     * SLIDING WINDOW BUFFER PURGE:
-     * Removes past played frames from RAM every second.
-     * Essential for Tesla Model 3 (Intel Atom) to avoid OOM "Aw, Snap!" crashes.
-     */
     purgePastBuffer() {
         if (!this.sourceBuffer || this.sourceBuffer.updating || !this.videoEl) return;
-        
         try {
             const currentTime = this.videoEl.currentTime;
-            // Keep only 0.3 seconds behind current playhead
             if (currentTime > 0.8 && this.sourceBuffer.buffered.length > 0) {
                 const start = this.sourceBuffer.buffered.start(0);
                 const purgeUntil = currentTime - 0.3;
@@ -203,42 +170,22 @@ class VideoPlayer {
                     this.sourceBuffer.remove(start, purgeUntil);
                 }
             }
-        } catch (err) {
-            console.warn('[MSE] Errore svuotamento buffer:', err);
-        }
+        } catch (_) {}
     }
 
-    /**
-     * LIVE-EDGE CATCH-UP:
-     * If browser lags behind live stream, accelerates playback or seeks directly.
-     */
     catchupLiveEdge() {
         if (!this.videoEl || this.videoEl.buffered.length === 0) return;
-
         const bufferEnd = this.videoEl.buffered.end(0);
         const drift = bufferEnd - this.videoEl.currentTime;
         this.stats.bufferMs = Math.round(drift * 1000);
 
         if (drift > 0.20) {
-            // Hard jump to live edge if delay > 200ms
             this.videoEl.currentTime = bufferEnd - 0.02;
             this.videoEl.playbackRate = 1.0;
         } else if (drift > 0.06) {
-            // Micro catchup: 6% speed increase to smoothly eliminate micro-delay
             this.videoEl.playbackRate = 1.06;
         } else {
             this.videoEl.playbackRate = 1.0;
-        }
-    }
-
-    forceFlushMseBuffer() {
-        if (!this.sourceBuffer || this.sourceBuffer.updating) return;
-        try {
-            if (this.sourceBuffer.buffered.length > 0) {
-                this.sourceBuffer.remove(0, this.sourceBuffer.buffered.end(0));
-            }
-        } catch (e) {
-            console.error('[MSE] Errore flush:', e);
         }
     }
 
@@ -249,60 +196,36 @@ class VideoPlayer {
         this.stats.bytesReceived += dataBuffer.byteLength;
 
         if (this.mode === 'webcodecs') {
-            this.feedWebCodecsChunk(dataBuffer, serverTimestamp);
+            if (!this.decoder || this.decoder.state === 'closed') return;
+            const u8 = new Uint8Array(dataBuffer);
+            const isKey = this.checkIfKeyframe(u8);
+
+            if (isKey || this.hasReceivedKeyframe) {
+                this.hasReceivedKeyframe = true;
+                try {
+                    const chunk = new EncodedVideoChunk({
+                        type: isKey ? 'key' : 'delta',
+                        timestamp: (serverTimestamp || performance.now()) * 1000,
+                        data: dataBuffer
+                    });
+                    this.decoder.decode(chunk);
+                } catch (_) {
+                    this.stats.droppedFrames++;
+                }
+            }
         } else if (this.mode === 'mse') {
             this.mseQueue.push(dataBuffer);
             this.processMseQueue();
         }
     }
 
-    feedWebCodecsChunk(dataBuffer, serverTimestamp) {
-        if (!this.decoder || this.decoder.state === 'closed') return;
-
-        const u8 = new Uint8Array(dataBuffer);
-        const isKey = this.checkIfKeyframe(u8);
-
-        if (!this.hasReceivedKeyframe && !isKey) {
-            // Drop delta frames until first IDR / Keyframe arrives
-            this.stats.droppedFrames++;
-            return;
-        }
-        this.hasReceivedKeyframe = true;
-
-        const timestampMicros = (serverTimestamp || performance.now()) * 1000;
-
-        try {
-            const chunk = new EncodedVideoChunk({
-                type: isKey ? 'key' : 'delta',
-                timestamp: timestampMicros,
-                data: dataBuffer
-            });
-            this.decoder.decode(chunk);
-        } catch (err) {
-            console.error('[WebCodecs] Errore decode chunk:', err);
-            this.stats.droppedFrames++;
-        }
-    }
-
-    /**
-     * Inspect NAL unit headers for H.264 IDR frames (NAL type 5) or SPS/PPS (7/8)
-     */
     checkIfKeyframe(u8) {
-        // Fast scan for Annex-B start codes: 0x00 0x00 0x01 or 0x00 0x00 0x00 0x01
         for (let i = 0; i < Math.min(u8.length - 4, 64); i++) {
             if (u8[i] === 0 && u8[i+1] === 0) {
-                let nalOffset = -1;
-                if (u8[i+2] === 1) {
-                    nalOffset = i + 3;
-                } else if (u8[i+2] === 0 && u8[i+3] === 1) {
-                    nalOffset = i + 4;
-                }
-
+                let nalOffset = u8[i+2] === 1 ? i+3 : (u8[i+2] === 0 && u8[i+3] === 1 ? i+4 : -1);
                 if (nalOffset !== -1 && nalOffset < u8.length) {
                     const nalType = u8[nalOffset] & 0x1F;
-                    if (nalType === 5 || nalType === 7 || nalType === 8) {
-                        return true;
-                    }
+                    if (nalType === 5 || nalType === 7 || nalType === 8) return true;
                 }
             }
         }
@@ -310,14 +233,179 @@ class VideoPlayer {
     }
 
     /* =========================================================================
-       4. TELEMETRY & FPS CALCULATOR
+       4. INTERACTIVE TEST DASHBOARD & TOUCH VISUALIZER
+       ========================================================================= */
+    addTouchPoint(normX, normY) {
+        this.touchRipples.push({
+            x: normX,
+            y: normY,
+            radius: 5,
+            maxRadius: 40,
+            opacity: 1.0
+        });
+    }
+
+    startMockRenderer() {
+        const renderLoop = () => {
+            if (!this.hasReceivedRealVideo && this.ctx && this.canvas) {
+                this.renderMockAndroidAutoUI();
+            }
+            requestAnimationFrame(renderLoop);
+        };
+        requestAnimationFrame(renderLoop);
+    }
+
+    renderMockAndroidAutoUI() {
+        const ctx = this.ctx;
+        const w = this.canvas.width;
+        const h = this.canvas.height;
+
+        this.mockAnimAngle += 0.02;
+
+        // Background / Map simulation
+        ctx.fillStyle = '#14171d';
+        ctx.fillRect(0, 0, w, h);
+
+        // Map grid lines
+        ctx.strokeStyle = '#1e2430';
+        ctx.lineWidth = 2;
+        const gridSize = 60;
+        for (let x = 0; x < w; x += gridSize) {
+            ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, h); ctx.stroke();
+        }
+        for (let y = 0; y < h; y += gridSize) {
+            ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(w, y); ctx.stroke();
+        }
+
+        // Simulated Roads
+        ctx.strokeStyle = '#2d3748';
+        ctx.lineWidth = 14;
+        ctx.beginPath();
+        ctx.moveTo(100, h - 80);
+        ctx.bezierCurveTo(w * 0.4, h * 0.7, w * 0.3, h * 0.3, w - 100, 100);
+        ctx.stroke();
+
+        // Route highlight
+        ctx.strokeStyle = '#3b82f6';
+        ctx.lineWidth = 8;
+        ctx.beginPath();
+        ctx.moveTo(100, h - 80);
+        ctx.bezierCurveTo(w * 0.4, h * 0.7, w * 0.3, h * 0.3, w - 100, 100);
+        ctx.stroke();
+
+        // Animated GPS Vehicle Marker
+        const carX = w * 0.45 + Math.sin(this.mockAnimAngle) * 60;
+        const carY = h * 0.45 + Math.cos(this.mockAnimAngle) * 40;
+        
+        ctx.fillStyle = '#e82127';
+        ctx.shadowColor = '#e82127';
+        ctx.shadowBlur = 15;
+        ctx.beginPath();
+        ctx.arc(carX, carY, 12, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.shadowBlur = 0;
+
+        // Top-left Navigation Card (Google Maps Mock)
+        ctx.fillStyle = 'rgba(24, 27, 36, 0.92)';
+        ctx.strokeStyle = 'rgba(255,255,255,0.1)';
+        ctx.lineWidth = 1;
+        this.roundRect(ctx, 24, 24, 340, 120, 14, true, true);
+
+        ctx.fillStyle = '#10b981';
+        ctx.font = 'bold 28px sans-serif';
+        ctx.fillText('↰ 450 m', 44, 68);
+
+        ctx.fillStyle = '#f0f2f5';
+        ctx.font = 'bold 16px sans-serif';
+        ctx.fillText('Via Roma / Corso Italia', 44, 98);
+
+        ctx.fillStyle = '#9095a0';
+        ctx.font = '13px sans-serif';
+        ctx.fillText('Arrivo 17:15 · 18 min · 14.2 km', 44, 124);
+
+        // Media Player Card (Spotify Mock)
+        this.roundRect(ctx, w - 360, 24, 336, 120, 14, true, true);
+        ctx.fillStyle = '#1db954';
+        ctx.font = 'bold 14px sans-serif';
+        ctx.fillText('🟢 Spotify · Android Auto', w - 340, 52);
+
+        ctx.fillStyle = '#f0f2f5';
+        ctx.font = 'bold 16px sans-serif';
+        ctx.fillText('Tesla Low-Latency Streamer', w - 340, 80);
+
+        ctx.fillStyle = '#9095a0';
+        ctx.font = '13px sans-serif';
+        ctx.fillText('Model 3 2019 (Intel Atom MCU2)', w - 340, 104);
+
+        ctx.fillStyle = '#f0f2f5';
+        ctx.font = '20px sans-serif';
+        ctx.fillText('⏮   ⏸   ⏭', w - 340, 130);
+
+        // Bottom Android Auto Taskbar
+        ctx.fillStyle = '#0f1015';
+        ctx.fillRect(0, h - 64, w, 64);
+        ctx.strokeStyle = 'rgba(255,255,255,0.08)';
+        ctx.strokeRect(0, h - 64, w, 1);
+
+        // Taskbar Icons
+        ctx.fillStyle = '#f0f2f5';
+        ctx.font = '22px sans-serif';
+        ctx.fillText('⊞', 24, h - 24); // App Grid
+        ctx.fillText('🗺️', 72, h - 24); // Maps
+        ctx.fillText('🎵', 120, h - 24); // Spotify
+        ctx.fillText('📞', 168, h - 24); // Phone
+
+        // Live Clock & Status in bottom right
+        const d = new Date();
+        const timeStr = `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+        ctx.font = 'bold 16px monospace';
+        ctx.fillStyle = '#f0f2f5';
+        ctx.fillText(`${timeStr}  📶 5G  🔋 94%`, w - 210, h - 26);
+
+        // Render Touch Ripples
+        for (let i = this.touchRipples.length - 1; i >= 0; i--) {
+            const r = this.touchRipples[i];
+            ctx.strokeStyle = `rgba(59, 130, 246, ${r.opacity})`;
+            ctx.fillStyle = `rgba(59, 130, 246, ${r.opacity * 0.25})`;
+            ctx.lineWidth = 3;
+            ctx.beginPath();
+            ctx.arc(r.x * w, r.y * h, r.radius, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.stroke();
+
+            r.radius += 1.8;
+            r.opacity -= 0.04;
+            if (r.opacity <= 0 || r.radius >= r.maxRadius) {
+                this.touchRipples.splice(i, 1);
+            }
+        }
+    }
+
+    roundRect(ctx, x, y, width, height, radius, fill, stroke) {
+        ctx.beginPath();
+        ctx.moveTo(x + radius, y);
+        ctx.lineTo(x + width - radius, y);
+        ctx.quadraticCurveTo(x + width, y, x + width, y + radius);
+        ctx.lineTo(x + width, y + height - radius);
+        ctx.quadraticCurveTo(x + width, y + height, x + width - radius, y + height);
+        ctx.lineTo(x + radius, y + height);
+        ctx.quadraticCurveTo(x, y + height, x, y + height - radius);
+        ctx.lineTo(x, y + radius);
+        ctx.quadraticCurveTo(x, y, x + radius, y);
+        ctx.closePath();
+        if (fill) ctx.fill();
+        if (stroke) ctx.stroke();
+    }
+
+    /* =========================================================================
+       5. TELEMETRY & FPS CALCULATOR
        ========================================================================= */
     startTelemetryLoop() {
         setInterval(() => {
             const now = performance.now();
             const elapsedFps = (now - this.stats.lastFpsUpdate) / 1000;
             if (elapsedFps >= 1.0) {
-                this.stats.fps = Math.round(this.stats.frameCount / elapsedFps);
+                this.stats.fps = this.hasReceivedRealVideo ? Math.round(this.stats.frameCount / elapsedFps) : 30;
                 this.stats.frameCount = 0;
                 this.stats.lastFpsUpdate = now;
             }

@@ -52,10 +52,6 @@
                         <button id="btn-manual-connect" class="action-btn primary">Connetti Subito</button>
                         <button id="btn-open-settings" class="action-btn secondary">⚙️ Opzioni IP</button>
                     </div>
-
-                    <div id="mixed-content-warning" class="warning-banner" style="display: none;">
-                        ⚠️ Se il browser blocca la connessione, tocca "Non sicuro" o apri la versione HTTP.
-                    </div>
                 </div>
             </div>
         </main>
@@ -178,7 +174,6 @@
     <script src="js/ws-client.js"></script>
     <script src="js/hud.js"></script>
     <script>
-        // Main initialization entry point
         window.addEventListener('DOMContentLoaded', () => {
             console.log('[Tesla-AA] Inizializzazione Client Web...');
             window.App = {
@@ -198,6 +193,10 @@
 
             window.App.touch.onPointerEvent = (eventData) => {
                 window.App.ws.sendTouch(eventData);
+                // Visual touch ripple on screen
+                if (window.App.player) {
+                    window.App.player.addTouchPoint(eventData.x, eventData.y);
+                }
             };
 
             window.App.ws.onStateChange = (state, message) => {
