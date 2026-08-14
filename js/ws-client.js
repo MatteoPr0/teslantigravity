@@ -26,10 +26,22 @@ class StreamWebSocketClient {
             return stored.trim();
         }
 
-        const host = window.location.hostname || '192.168.43.1';
+        const host = window.location.hostname;
         const port = window.location.port || '8080';
         const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-        return `${protocol}//${host}:${port}/stream`;
+
+        // Local testing on PC / Mac
+        if (host === 'localhost' || host === '127.0.0.1') {
+            return `ws://localhost:${port}/stream`;
+        }
+        
+        // Local network IP (e.g. 192.168.x.x)
+        if (host && !host.includes('github.io')) {
+            return `${protocol}//${host}:${port}/stream`;
+        }
+
+        // Default Android Hotspot IP for Tesla in-car browser
+        return 'ws://192.168.43.1:8080/stream';
     }
 
     setServerUrl(newUrl) {
@@ -99,7 +111,6 @@ class StreamWebSocketClient {
 
         if (header === 0x01) {
             // Type 0x01: Video Frame with 64-bit microsecond timestamp
-            // [1 byte Header (0x01)] + [8 bytes Float64/Uint64 Timestamp] + [Raw H.264 Payload]
             let timestampMs = performance.now();
             if (buffer.byteLength > 9) {
                 try {
@@ -111,7 +122,6 @@ class StreamWebSocketClient {
                 this.onFrameReceived(videoPayload, timestampMs);
             }
         } else {
-            // Raw H.264 NAL unit or direct fMP4 chunk without custom header
             if (typeof this.onFrameReceived === 'function') {
                 this.onFrameReceived(buffer, performance.now());
             }
@@ -131,7 +141,7 @@ class StreamWebSocketClient {
     }
 
     handleClose(event) {
-        console.warn('[WS] Connessione chiusa. Code:', event.code, 'Reason:', event.reason);
+        console.warn('[WS] Connessione chiusa. Code:', event.code);
         this.isConnected = false;
         this.stopHeartbeat();
         this.updateState('offline', 'Disconnesso. Riconnessione in corso...');
@@ -143,7 +153,6 @@ class StreamWebSocketClient {
         
         this.reconnectAttempts++;
         const delay = Math.min(1000 * Math.pow(1.3, this.reconnectAttempts), 4000);
-        console.log(`[WS] Prossimo tentativo di riconnessione tra ${Math.round(delay)}ms...`);
         
         this.reconnectTimer = setTimeout(() => {
             this.reconnectTimer = null;
@@ -182,7 +191,6 @@ class StreamWebSocketClient {
     sendTouch(touchData) {
         if (!this.isConnected || !this.ws || this.ws.readyState !== WebSocket.OPEN) return;
 
-        // Lightweight JSON touch packet
         this.sendMessage({
             type: 'touch',
             action: touchData.action, // 0: Down, 1: Up, 2: Move, 3: Cancel
