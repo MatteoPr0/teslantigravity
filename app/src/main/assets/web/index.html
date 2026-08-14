@@ -30,13 +30,28 @@
                         <div class="pulse-ring"></div>
                         <div class="status-icon" id="status-icon">🚗</div>
                     </div>
-                    <h2 id="status-title">Connessione a Android Auto...</h2>
-                    <p id="status-desc">Assicurati che l'hotspot dello smartphone a 5GHz sia attivo e che la Tesla sia collegata.</p>
+                    <h2 id="status-title">In attesa dello Smartphone...</h2>
+                    <p id="status-desc">Attiva l'Hotspot 5GHz e avvia l'app (TaaDa / TesDisplay / Streamer) sul telefono.</p>
+                    
+                    <!-- Quick Preset Selectors for Easy Tesla Touchscreen Access -->
+                    <div class="preset-selector">
+                        <span class="preset-title">Seleziona la tua App:</span>
+                        <div class="preset-buttons">
+                            <button id="preset-taada" class="preset-btn active" data-url="ws://192.168.43.1:8080/stream">TaaDa (8080)</button>
+                            <button id="preset-tesdisplay" class="preset-btn" data-url="ws://192.168.43.1:8000/stream">TesDisplay (8000)</button>
+                            <button id="preset-custom" class="preset-btn" data-url="ws://192.168.43.1:8080">Personalizzato</button>
+                        </div>
+                    </div>
+
                     <div class="quick-instructions">
                         <span class="pill">📶 Wi-Fi: "Rimani connesso in Drive"</span>
                         <span class="pill">🔊 Audio: Bluetooth Tesla</span>
                     </div>
-                    <button id="btn-manual-connect" class="action-btn">Riconnetti Ora</button>
+
+                    <div class="action-row">
+                        <button id="btn-manual-connect" class="action-btn primary">Connetti Subito</button>
+                        <button id="btn-open-settings" class="action-btn secondary">⚙️ Opzioni IP</button>
+                    </div>
                 </div>
             </div>
         </main>
@@ -74,7 +89,7 @@
         <div id="diagnostics-modal" class="modal-hidden">
             <div class="modal-content">
                 <div class="modal-header">
-                    <h3>Diagnostica Stream & Hardware MCU</h3>
+                    <h3>Diagnostica Stream & Hardware MCU2</h3>
                     <button id="btn-close-diag" class="close-btn">×</button>
                 </div>
                 <div class="diag-grid">
@@ -117,13 +132,13 @@
                     <div class="form-group">
                         <label for="input-ws-url">Indirizzo WebSocket Server (Telefono)</label>
                         <input type="text" id="input-ws-url" placeholder="ws://192.168.43.1:8080/stream">
-                        <small>Rilevato automaticamente in base all'indirizzo del browser.</small>
+                        <small>IP tipico hotspot Android: 192.168.43.1</small>
                     </div>
 
                     <div class="form-group">
                         <label for="select-engine">Motore di Rendering</label>
                         <select id="select-engine">
-                            <option value="auto">Automatico (Raccomandato: WebCodecs se disponibile)</option>
+                            <option value="auto">Automatico (WebCodecs se disponibile)</option>
                             <option value="webcodecs">Forza WebCodecs API (Zero Buffer)</option>
                             <option value="mse">Forza MediaSource Extensions (MSE fMP4)</option>
                         </select>
@@ -141,12 +156,12 @@
                     <div class="form-group checkbox-group">
                         <label>
                             <input type="checkbox" id="check-aggressive-purge" checked>
-                            Svuotamento Aggressivo Buffer (Indispensabile per Intel Atom MCU2)
+                            Svuotamento Aggressivo Buffer (Anti-Crash Intel Atom)
                         </label>
                     </div>
 
                     <div class="form-actions">
-                        <button id="btn-save-settings" class="action-btn">Salva e Riavvia</button>
+                        <button id="btn-save-settings" class="action-btn primary">Salva e Riavvia</button>
                     </div>
                 </div>
             </div>
@@ -159,7 +174,6 @@
     <script src="js/ws-client.js"></script>
     <script src="js/hud.js"></script>
     <script>
-        // Main initialization entry point
         window.addEventListener('DOMContentLoaded', () => {
             console.log('[Tesla-AA] Inizializzazione Client Web...');
             window.App = {
@@ -179,11 +193,28 @@
 
             window.App.touch.onPointerEvent = (eventData) => {
                 window.App.ws.sendTouch(eventData);
+                // Visual touch ripple on screen
+                if (window.App.player) {
+                    window.App.player.addTouchPoint(eventData.x, eventData.y);
+                }
             };
 
             window.App.ws.onStateChange = (state, message) => {
                 window.App.hud.updateConnectionState(state, message);
             };
+
+            // Setup Preset Buttons
+            const presetButtons = document.querySelectorAll('.preset-btn');
+            presetButtons.forEach(btn => {
+                btn.addEventListener('click', () => {
+                    presetButtons.forEach(b => b.classList.remove('active'));
+                    btn.classList.add('active');
+                    const url = btn.getAttribute('data-url');
+                    if (url) {
+                        window.App.ws.setServerUrl(url);
+                    }
+                });
+            });
 
             // Start connection
             window.App.ws.connect();

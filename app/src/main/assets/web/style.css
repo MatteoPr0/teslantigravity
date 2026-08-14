@@ -85,10 +85,10 @@ html, body {
 }
 
 #video-player {
-    display: none; /* Managed dynamically by Player Engine */
+    display: none;
 }
 
-/* Touch Capture Layer directly above video */
+/* Touch Capture Layer */
 #touch-surface {
     position: absolute;
     inset: 0;
@@ -121,24 +121,24 @@ html, body {
 }
 
 .status-card {
-    max-width: 480px;
+    max-width: 520px;
     width: 90%;
     background: var(--bg-surface);
     border: 1px solid var(--border-subtle);
     border-radius: var(--radius-lg);
-    padding: 32px 28px;
+    padding: 30px 24px;
     text-align: center;
     box-shadow: var(--shadow-float);
     display: flex;
     flex-direction: column;
     align-items: center;
-    gap: 16px;
+    gap: 14px;
 }
 
 .spinner-container {
     position: relative;
-    width: 72px;
-    height: 72px;
+    width: 68px;
+    height: 68px;
     display: flex;
     align-items: center;
     justify-content: center;
@@ -161,21 +161,62 @@ html, body {
 }
 
 .status-icon {
-    font-size: 32px;
+    font-size: 30px;
     z-index: 2;
 }
 
 .status-card h2 {
     font-size: 20px;
     font-weight: 600;
-    letter-spacing: -0.02em;
     color: var(--text-primary);
 }
 
 .status-card p {
-    font-size: 14px;
+    font-size: 13px;
     line-height: 1.5;
     color: var(--text-secondary);
+}
+
+/* Preset Buttons for Easy Tesla Touch */
+.preset-selector {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    width: 100%;
+    margin-top: 4px;
+}
+
+.preset-title {
+    font-size: 11px;
+    font-weight: 600;
+    color: var(--text-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+}
+
+.preset-buttons {
+    display: flex;
+    gap: 8px;
+    justify-content: center;
+}
+
+.preset-btn {
+    flex: 1;
+    padding: 10px 8px;
+    background: var(--bg-surface-elevated);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-md);
+    color: var(--text-secondary);
+    font-size: 12px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.2s;
+}
+
+.preset-btn.active {
+    background: rgba(59, 130, 246, 0.15);
+    border-color: var(--accent-blue);
+    color: var(--accent-blue);
 }
 
 .quick-instructions {
@@ -183,11 +224,10 @@ html, body {
     flex-wrap: wrap;
     gap: 8px;
     justify-content: center;
-    margin-top: 4px;
 }
 
 .pill {
-    font-size: 12px;
+    font-size: 11px;
     font-weight: 500;
     padding: 6px 12px;
     background: var(--bg-surface-elevated);
@@ -196,21 +236,48 @@ html, body {
     color: var(--text-primary);
 }
 
+.action-row {
+    display: flex;
+    gap: 10px;
+    width: 100%;
+    margin-top: 6px;
+}
+
 .action-btn {
-    margin-top: 8px;
-    padding: 12px 24px;
-    background: var(--accent-blue);
-    color: #fff;
-    font-size: 14px;
+    padding: 12px 18px;
+    font-size: 13px;
     font-weight: 600;
-    border: none;
     border-radius: var(--radius-md);
     cursor: pointer;
-    transition: background 0.2s, transform 0.1s;
+    border: none;
+    transition: transform 0.1s, opacity 0.2s;
+}
+
+.action-btn.primary {
+    flex: 2;
+    background: var(--accent-blue);
+    color: #fff;
+}
+
+.action-btn.secondary {
+    flex: 1;
+    background: var(--bg-surface-elevated);
+    border: 1px solid var(--border-subtle);
+    color: var(--text-primary);
 }
 
 .action-btn:active {
     transform: scale(0.97);
+}
+
+.warning-banner {
+    background: rgba(245, 158, 11, 0.12);
+    border: 1px solid rgba(245, 158, 11, 0.3);
+    border-radius: var(--radius-md);
+    padding: 8px 12px;
+    color: var(--accent-amber);
+    font-size: 11px;
+    line-height: 1.4;
 }
 
 /* Floating Telemetry HUD */
@@ -231,7 +298,6 @@ html, body {
     -webkit-backdrop-filter: blur(8px);
     font-size: 12px;
     font-weight: 500;
-    letter-spacing: 0.02em;
     transition: opacity 0.3s;
 }
 
@@ -296,11 +362,6 @@ html, body {
     padding: 4px 6px;
     border-radius: var(--radius-sm);
     color: var(--text-primary);
-    transition: background 0.2s;
-}
-
-.icon-btn:hover {
-    background: rgba(255, 255, 255, 0.1);
 }
 
 /* Modals */
@@ -353,10 +414,8 @@ html, body {
     color: var(--text-secondary);
     font-size: 22px;
     cursor: pointer;
-    line-height: 1;
 }
 
-/* Diagnostic Grid */
 .diag-grid {
     display: grid;
     grid-template-columns: 1fr 1fr;
@@ -387,7 +446,6 @@ html, body {
     font-family: monospace;
 }
 
-/* Settings Form */
 .settings-body {
     display: flex;
     flex-direction: column;
