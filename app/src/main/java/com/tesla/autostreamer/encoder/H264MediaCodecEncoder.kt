@@ -7,7 +7,6 @@ import android.os.Bundle
 import android.util.Log
 import android.view.Surface
 import java.io.ByteArrayOutputStream
-import java.nio.ByteBuffer
 
 /**
  * Hardware-Accelerated H.264 Encoder using Android MediaCodec
@@ -76,7 +75,7 @@ class H264MediaCodecEncoder(
 
             Log.i(TAG, "Encoder MediaCodec avviato con successo.")
         } catch (e: Exception) {
-            Log.error(TAG, "Errore durante l'avvio di MediaCodec", e)
+            Log.e(TAG, "Errore durante l'avvio di MediaCodec", e)
             stop()
             throw e
         }
@@ -180,8 +179,4 @@ class H264MediaCodecEncoder(
 
         Log.i(TAG, "Encoder H.264 arrestato.")
     }
-}
-
-private fun Log.Companion.error(tag: String, msg: String, tr: Throwable) {
-    Log.e(tag, msg, tr)
 }

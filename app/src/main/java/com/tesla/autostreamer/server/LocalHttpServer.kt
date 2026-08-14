@@ -72,8 +72,6 @@ class LocalHttpServer(
             }
 
             install(WebSockets) {
-                pingPeriod = java.time.Duration.ofSeconds(5)
-                timeout = java.time.Duration.ofSeconds(15)
                 maxFrameSize = 10 * 1024 * 1024 // 10 MB
                 masking = false
             }
