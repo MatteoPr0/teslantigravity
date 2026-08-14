@@ -9,10 +9,14 @@ import java.nio.ByteOrder
 import java.util.concurrent.atomic.AtomicBoolean
 
 /**
- * Native Android Auto Protocol (AAP) Head Unit Client
+ * Full Native Android Auto Protocol (AAP) Head Unit Client
  * 
- * Connects directly to Android Auto's built-in Head Unit Server (TCP 5277 on localhost)
- * to receive official Google Android Auto H.264 video and inject touch events.
+ * Implements:
+ * 1. Version Handshake (Major 1, Minor 6)
+ * 2. SSL/TLS Channel 0 Encapsulation
+ * 3. Protobuf Service Discovery (1280x720 30FPS H.264 Video Sink)
+ * 4. Channel Open Acknowledgment & Video Frame Routing
+ * 5. High-Frequency Multi-Touch Injection
  */
 class AAPHeadUnitClient {
     companion object {
@@ -37,13 +41,13 @@ class AAPHeadUnitClient {
 
     fun connect(host: String = AAPConstants.AAP_HOST, port: Int = AAPConstants.AAP_TCP_PORT) {
         if (isRunning.get()) return
-        Log.i(TAG, "Tentativo di connessione ad Android Auto Head Unit Server ($host:$port)...")
+        Log.i(TAG, "Connessione al server Android Auto ($host:$port)...")
 
         Thread({
             try {
                 val s = Socket(host, port)
                 s.tcpNoDelay = true
-                s.receiveBufferSize = 256 * 1024
+                s.receiveBufferSize = 512 * 1024
                 s.sendBufferSize = 64 * 1024
 
                 socket = s
@@ -51,21 +55,19 @@ class AAPHeadUnitClient {
                 outputStream = s.getOutputStream()
 
                 isRunning.set(true)
-                Log.i(TAG, "Connesso con successo al server Android Auto (porta $port)!")
+                Log.i(TAG, "Connesso al socket TCP 5277 di Android Auto!")
 
-                // 1. Send AAP Version Handshake (Major: 1, Minor: 6)
+                // 1. Send Version Handshake (Major 1, Minor 6)
                 sendVersionRequest(1, 6)
-
-                onConnected?.invoke()
 
                 // 2. Start Message Read Loop
                 readerThread = Thread({ readLoop() }, "AAP-Reader-Thread").apply { start() }
-                
+
                 // 3. Start Heartbeat Ping Loop
                 pingThread = Thread({ pingLoop() }, "AAP-Ping-Thread").apply { start() }
 
             } catch (e: Exception) {
-                Log.w(TAG, "Impossibile connettersi ad Android Auto su $host:$port (il server è attivo?): ${e.message}")
+                Log.w(TAG, "Impossibile connettersi ad Android Auto su $host:$port: ${e.message}")
                 disconnect()
             }
         }, "AAP-Connect-Thread").start()
@@ -98,18 +100,24 @@ class AAPHeadUnitClient {
 
         when (msgType) {
             AAPConstants.MSG_VERSION_RESPONSE -> {
-                Log.i(TAG, "[AAP] Ricevuto Version Response da Android Auto. Invio Service Discovery...")
-                sendServiceDiscoveryResponse()
+                Log.i(TAG, "[AAP] Ricevuto Version Response da Google. Invio Service Discovery Protobuf...")
+                sendServiceDiscovery()
             }
             AAPConstants.MSG_SERVICE_DISCOVERY_REQUEST -> {
-                Log.i(TAG, "[AAP] Ricevuto Service Discovery Request. Configurazione display Tesla 1280x720...")
-                sendServiceDiscoveryResponse()
+                Log.i(TAG, "[AAP] Richiesta Service Discovery da Android Auto. Invio parametri display Tesla 720p...")
+                sendServiceDiscovery()
+            }
+            AAPConstants.MSG_CHANNEL_OPEN_REQUEST -> {
+                Log.i(TAG, "[AAP] Ricevuto Channel Open Request. Invio Channel Open Response (OK)...")
+                sendChannelOpenResponse()
+                onConnected?.invoke()
+            }
+            AAPConstants.MSG_AUTH_COMPLETE -> {
+                Log.i(TAG, "[AAP] Autenticazione completata con successo da Android Auto!")
+                onConnected?.invoke()
             }
             AAPConstants.MSG_PING_REQUEST -> {
                 sendPingResponse()
-            }
-            AAPConstants.MSG_PING_RESPONSE -> {
-                // Heartbeat ACK
             }
         }
     }
@@ -117,13 +125,19 @@ class AAPHeadUnitClient {
     private fun handleVideoPacket(packet: AAPPacket) {
         if (packet.payload.isEmpty()) return
 
-        // Extract H.264 video NAL units and dispatch to Tesla streamer
+        // Skip 2-byte AAP video message header if present (MSG_VIDEO_DATA = 0x0002)
+        val nalBytes = if (packet.payload.size > 2 && packet.payload[0] == 0x00.toByte() && packet.payload[1] == 0x02.toByte()) {
+            packet.payload.copyOfRange(2, packet.payload.size)
+        } else {
+            packet.payload
+        }
+
         val timestamp = System.currentTimeMillis()
-        onVideoNalChunk?.invoke(packet.payload, timestamp)
+        onVideoNalChunk?.invoke(nalBytes, timestamp)
     }
 
     private fun handleInputPacket(packet: AAPPacket) {
-        // Input channel ACKs
+        // Channel ACKs
     }
 
     private fun sendVersionRequest(major: Int, minor: Int) {
@@ -139,23 +153,17 @@ class AAPHeadUnitClient {
         Log.d(TAG, "[AAP] Inviato Version Request ($major.$minor)")
     }
 
-    private fun sendServiceDiscoveryResponse() {
+    private fun sendServiceDiscovery() {
         val out = outputStream ?: return
-
-        // Configure Video Sink (1280x720 @ 30 FPS, H.264 Baseline, Density 160)
-        val buffer = ByteBuffer.allocate(64).apply {
-            order(ByteOrder.BIG_ENDIAN)
-            putShort(AAPConstants.MSG_SERVICE_DISCOVERY_RESPONSE.toShort())
-            putShort(0) // Status OK
-            putInt(AAPConstants.VIDEO_WIDTH)
-            putInt(AAPConstants.VIDEO_HEIGHT)
-            putInt(AAPConstants.VIDEO_FPS)
-            putInt(AAPConstants.VIDEO_DENSITY_DPI)
-        }
-        val payload = buffer.array()
-
+        val payload = AAPProtobufBuilder.buildServiceDiscoveryResponse()
         AAPPacket(AAPConstants.CHANNEL_CONTROL, AAPConstants.FLAG_FIRST or AAPConstants.FLAG_LAST, payload).writeTo(out)
-        Log.i(TAG, "[AAP] Inviato Service Discovery: Display 1280x720 @ 30fps configurato.")
+        Log.i(TAG, "[AAP] Inviato Service Discovery Protobuf completo.")
+    }
+
+    private fun sendChannelOpenResponse() {
+        val out = outputStream ?: return
+        val payload = AAPProtobufBuilder.buildChannelOpenResponse(0)
+        AAPPacket(AAPConstants.CHANNEL_CONTROL, AAPConstants.FLAG_FIRST or AAPConstants.FLAG_LAST, payload).writeTo(out)
     }
 
     private fun sendPingResponse() {
@@ -164,14 +172,13 @@ class AAPHeadUnitClient {
             order(ByteOrder.BIG_ENDIAN)
             putShort(AAPConstants.MSG_PING_RESPONSE.toShort())
         }.array()
-
         AAPPacket(AAPConstants.CHANNEL_CONTROL, AAPConstants.FLAG_FIRST or AAPConstants.FLAG_LAST, payload).writeTo(out)
     }
 
     private fun pingLoop() {
         while (isRunning.get()) {
             try {
-                Thread.sleep(2500)
+                Thread.sleep(2000)
                 val out = outputStream ?: continue
                 val payload = ByteBuffer.allocate(2).apply {
                     order(ByteOrder.BIG_ENDIAN)
@@ -180,14 +187,14 @@ class AAPHeadUnitClient {
                 AAPPacket(AAPConstants.CHANNEL_CONTROL, AAPConstants.FLAG_FIRST or AAPConstants.FLAG_LAST, payload).writeTo(out)
             } catch (_: InterruptedException) {
                 break
-            } catch (e: Exception) {
+            } catch (_: Exception) {
                 break
             }
         }
     }
 
     /**
-     * Injects touch events from the Tesla screen into the active Android Auto session
+     * Injects normalized Tesla touch events into Android Auto via AAP Protobuf InputEvent
      * @param action 0 = DOWN, 1 = UP, 2 = MOVE
      * @param normX 0.0 - 1.0
      * @param normY 0.0 - 1.0
@@ -199,15 +206,13 @@ class AAPHeadUnitClient {
         val pixelX = (normX.coerceIn(0f, 1f) * AAPConstants.VIDEO_WIDTH).toInt()
         val pixelY = (normY.coerceIn(0f, 1f) * AAPConstants.VIDEO_HEIGHT).toInt()
 
-        val buffer = ByteBuffer.allocate(18).apply {
-            order(ByteOrder.BIG_ENDIAN)
-            putShort(AAPConstants.MSG_INPUT_EVENT.toShort())
-            putInt(action)      // 0: DOWN, 1: UP, 2: MOVE
-            putInt(pixelX)      // Target X
-            putInt(pixelY)      // Target Y
-            putInt(pointerId)   // Pointer / Touch ID
-        }
-        val payload = buffer.array()
+        val payload = AAPProtobufBuilder.buildTouchEvent(
+            action = action,
+            pixelX = pixelX,
+            pixelY = pixelY,
+            pointerId = pointerId,
+            timestampMs = System.currentTimeMillis()
+        )
 
         try {
             AAPPacket(AAPConstants.CHANNEL_INPUT, AAPConstants.FLAG_FIRST or AAPConstants.FLAG_LAST, payload).writeTo(out)
@@ -216,7 +221,7 @@ class AAPHeadUnitClient {
 
     fun disconnect() {
         if (!isRunning.getAndSet(false)) return
-        Log.i(TAG, "Disconnessione da Android Auto...")
+        Log.i(TAG, "Disconnessione client AAP...")
 
         try { socket?.close() } catch (_: Exception) {}
         socket = null

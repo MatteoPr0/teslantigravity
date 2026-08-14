@@ -114,9 +114,8 @@ class StreamForegroundService : Service() {
             serviceScope.launch {
                 try {
                     val config = VideoConfig.PRESET_720P_30FPS
-                    touchInjector = TouchInjector(this@StreamForegroundService, config.width, config.height)
 
-                    // 1. Initialize Native AAP Client
+                    // 1. Initialize Native AAP Client for Android Auto on TCP 5277
                     aapClient = AAPHeadUnitClient().apply {
                         onConnected = {
                             _isAAPConnected.value = true
@@ -130,12 +129,14 @@ class StreamForegroundService : Service() {
                         }
                     }
 
-                    // Touch forwarding to AAP
-                    touchInjector?.onTouchEventMapped = { action, _, _, pointerId ->
-                        // Forward normalized touch to AAP
+                    // 2. Initialize Touch Injector with direct AAP mapping
+                    touchInjector = TouchInjector(this@StreamForegroundService, config.width, config.height).apply {
+                        onTouchEventMapped = { action, pixelX, pixelY, pointerId ->
+                            aapClient?.sendTouchEvent(action, pixelX / config.width, pixelY / config.height, pointerId)
+                        }
                     }
 
-                    // 2. Initialize Local HTTP & WebSocket Server for Tesla
+                    // 3. Initialize Local HTTP & WebSocket Server for Tesla
                     server = LocalHttpServer(this@StreamForegroundService, port = 8080, touchInjector = touchInjector!!).apply {
                         onClientConnected = {
                             _clientCount.value = connectedClientsCount
@@ -151,10 +152,10 @@ class StreamForegroundService : Service() {
                         start()
                     }
 
-                    // Try connecting to Android Auto Head Unit Server (TCP 5277)
+                    // Connect to Android Auto Head Unit Server (TCP 5277)
                     aapClient?.connect()
 
-                    // 3. Fallback / Auxiliary Hardware Encoder for VirtualDisplay
+                    // 4. Auxiliary Hardware Encoder (if user granted screen capture fallback)
                     if (resultData != null && resultCode == Activity.RESULT_OK) {
                         try {
                             mediaProjection = mediaProjectionManager?.getMediaProjection(resultCode, resultData)
@@ -178,7 +179,7 @@ class StreamForegroundService : Service() {
                                 null
                             )
                         } catch (e: Exception) {
-                            Log.w(TAG, "VirtualDisplay non attivo: ${e.message}")
+                            Log.w(TAG, "VirtualDisplay fallback: ${e.message}")
                         }
                     }
 
