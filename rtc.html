@@ -39,6 +39,19 @@ html,body{
     font:12px/1.4 monospace;
     pointer-events:none
 }
+#diag{
+    position:fixed;
+    top:76px;
+    left:14px;
+    z-index:21;
+    padding:9px 13px;
+    border-radius:10px;
+    background:rgba(0,0,0,.8);
+    border:1px solid rgba(255,255,255,.15);
+    font:12px/1.5 monospace;
+    pointer-events:none;
+    min-width:210px
+}
 #gear{
     position:fixed;
     top:14px;
@@ -135,6 +148,10 @@ RTC Android Auto<br>
 In attesa...
 </div>
 
+<div id="diag">
+Diagnostica...
+</div>
+
 <button id="gear">⚙</button>
 
 <div id="panel">
@@ -200,6 +217,21 @@ var rxChunks=0;
 var rxBytes=0;
 var decodedFrames=0;
 
+var fpsWindowStart=performance.now();
+var fpsWindowFrames=0;
+var decodedFps=0;
+
+var phoneBuffered=0;
+var phoneTxFps=0;
+var phoneTxMbps=0;
+var lastPhoneFrames=0;
+var lastPhoneBytes=0;
+var lastPhoneStatsAt=0;
+
+var touchRtt=null;
+var iceRtt=null;
+var icePath="-";
+
 var canvas=document.getElementById("canvas");
 
 var ctx=canvas.getContext(
@@ -213,6 +245,7 @@ var ctx=canvas.getContext(
 var panel=document.getElementById("panel");
 var roomEl=document.getElementById("room");
 var statusEl=document.getElementById("status");
+var diagEl=document.getElementById("diag");
 var panelStatus=document.getElementById("panelStatus");
 
 document.getElementById("rtcBadge").textContent=
@@ -410,6 +443,20 @@ function initDecoder(){
             frame.close();
 
             decodedFrames++;
+            fpsWindowFrames++;
+
+            var fpsNow=performance.now();
+            var fpsElapsed=fpsNow-fpsWindowStart;
+
+            if(fpsElapsed>=1000){
+                decodedFps=
+                    fpsWindowFrames*
+                    1000/
+                    fpsElapsed;
+
+                fpsWindowFrames=0;
+                fpsWindowStart=fpsNow;
+            }
 
             if(
                 decodedFrames===1 ||
@@ -839,6 +886,66 @@ function setupControlChannel(channel){
             "Control channel open"
         );
     };
+
+    controlDc.onmessage=function(event){
+
+        if(typeof event.data!=="string"){
+            return;
+        }
+
+        var parts=event.data.split(",");
+
+        if(parts[0]==="touchack"){
+
+            var sentAt=
+                Number(parts[1]);
+
+            if(Number.isFinite(sentAt)){
+                touchRtt=
+                    performance.now()-
+                    sentAt;
+            }
+
+            return;
+        }
+
+        if(parts[0]==="stats"){
+
+            var now=performance.now();
+            var buffered=
+                Number(parts[1])||0;
+            var frames=
+                Number(parts[2])||0;
+            var bytes=
+                Number(parts[3])||0;
+
+            phoneBuffered=buffered;
+
+            if(lastPhoneStatsAt>0){
+
+                var dt=
+                    now-lastPhoneStatsAt;
+
+                if(dt>0){
+
+                    phoneTxFps=
+                        (frames-lastPhoneFrames)*
+                        1000/
+                        dt;
+
+                    phoneTxMbps=
+                        (bytes-lastPhoneBytes)*
+                        8/
+                        dt/
+                        1000;
+                }
+            }
+
+            lastPhoneFrames=frames;
+            lastPhoneBytes=bytes;
+            lastPhoneStatsAt=now;
+        }
+    };
 }
 
 function createPeer(){
@@ -1041,13 +1148,23 @@ function sendTouch(action,x,y){
         return;
     }
 
+    var stamp=
+        action===0
+            ? performance.now().toFixed(3)
+            : "";
+
     controlDc.send(
         "touch,"+
         action+
         ","+
         nx.toFixed(4)+
         ","+
-        ny.toFixed(4)
+        ny.toFixed(4)+
+        (
+            stamp
+                ? ","+stamp
+                : ""
+        )
     );
 }
 
@@ -1116,6 +1233,129 @@ stage.addEventListener(
 
         activePointer=null;
     }
+);
+
+async function updateRtcStats(){
+
+    if(
+        !pc ||
+        pc.connectionState!=="connected"
+    ){
+        return;
+    }
+
+    try{
+
+        var stats=
+            await pc.getStats();
+
+        var pair=null;
+
+        stats.forEach(function(report){
+
+            if(
+                report.type==="transport" &&
+                report.selectedCandidatePairId
+            ){
+                pair=
+                    stats.get(
+                        report.selectedCandidatePairId
+                    ) || pair;
+            }
+        });
+
+        if(!pair){
+
+            stats.forEach(function(report){
+
+                if(
+                    report.type==="candidate-pair" &&
+                    report.state==="succeeded" &&
+                    report.nominated
+                ){
+                    pair=report;
+                }
+            });
+        }
+
+        if(pair){
+
+            if(
+                typeof pair.currentRoundTripTime===
+                "number"
+            ){
+                iceRtt=
+                    pair.currentRoundTripTime*
+                    1000;
+            }
+
+            var local=
+                stats.get(
+                    pair.localCandidateId
+                );
+
+            var remote=
+                stats.get(
+                    pair.remoteCandidateId
+                );
+
+            icePath=
+                (local&&local.candidateType
+                    ?local.candidateType
+                    :"?"
+                )+
+                " ↔ "+
+                (remote&&remote.candidateType
+                    ?remote.candidateType
+                    :"?"
+                );
+        }
+
+    }catch(_){}
+}
+
+function renderDiag(){
+
+    diagEl.innerHTML=
+        "Decoder: "+
+        decodedFps.toFixed(1)+
+        " fps<br>"+
+        "TX video: "+
+        phoneTxFps.toFixed(1)+
+        " chunk/s · "+
+        phoneTxMbps.toFixed(2)+
+        " Mbps<br>"+
+        "Buffer TX: "+
+        (
+            phoneBuffered/
+            1024/
+            1024
+        ).toFixed(2)+
+        " MB<br>"+
+        "Touch RTT: "+
+        (
+            touchRtt===null
+                ?"—"
+                :touchRtt.toFixed(0)+" ms"
+        )+
+        "<br>"+
+        "ICE RTT: "+
+        (
+            iceRtt===null
+                ?"—"
+                :iceRtt.toFixed(0)+" ms"
+        )+
+        "<br>"+
+        "Path: "+
+        icePath;
+}
+
+setInterval(
+    function(){
+        renderDiag();
+        updateRtcStats();
+    },
+    1000
 );
 
 setStatus(
