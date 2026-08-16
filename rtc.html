@@ -417,11 +417,22 @@ function forceResync(reason){
     try{
         if(
             decoder &&
-            decoder.state==="configured"
+            decoder.state!=="closed"
         ){
             decoder.reset();
+
+            decoder.configure({
+                codec:"avc1.42E01F",
+                optimizeForLatency:true,
+                hardwareAcceleration:"prefer-hardware"
+            });
         }
-    }catch(_){}
+    }catch(error){
+        console.error(
+            "Resync decoder:",
+            error
+        );
+    }
 
     setStatus(
         "⏩ RESYNC H264<br>"+
@@ -672,23 +683,7 @@ function feedH264(buffer){
         haveDecodedKey=false;
     }
 
-    if(
-        decoder &&
-        decoder.state==="configured" &&
-        decoder.decodeQueueSize>8
-    ){
 
-        forceResync(
-            "decoder queue"
-        );
-
-        if(!hasIdr){
-            return;
-        }
-
-        needKeyframe=false;
-        haveDecodedKey=false;
-    }
 
     if(
         rxChunks<=5 ||
