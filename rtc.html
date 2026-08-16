@@ -806,21 +806,6 @@ function receiveVideoPacket(buffer){
     var id=
         view.getUint32(4,false);
 
-    if(
-        lastCompletedFrameId!==null &&
-        id>lastCompletedFrameId+1 &&
-        !assemblies.has(id)
-    ){
-        transportLosses++;
-
-        forceResync(
-            "frame gap "+
-            lastCompletedFrameId+
-            " → "+
-            id
-        );
-    }
-
     var part=
         view.getUint16(8,false);
 
@@ -891,32 +876,20 @@ setInterval(
         var now=
             performance.now();
 
-        var expired=false;
-
         assemblies.forEach(
             function(value,key){
 
                 if(
                     now-value.created>
-                    500
+                    5000
                 ){
                     assemblies.delete(key);
-                    expired=true;
                 }
             }
         );
 
-        if(expired){
-
-            transportLosses++;
-
-            forceResync(
-                "fragment timeout"
-            );
-        }
-
     },
-    250
+    1000
 );
 
 function setupVideoChannel(channel){
