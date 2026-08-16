@@ -24,7 +24,7 @@ html,body{
 #canvas{
     width:100%;
     height:100%;
-    object-fit:contain;
+    object-fit:fill;
     background:#000
 }
 #status{
@@ -199,6 +199,9 @@ var frameTimestamp=0;
 var rxChunks=0;
 var rxBytes=0;
 var decodedFrames=0;
+var needKeyframe=false;
+var lastCompletedFrameId=null;
+var transportLosses=0;
 
 var canvas=document.getElementById("canvas");
 
@@ -214,6 +217,42 @@ var panel=document.getElementById("panel");
 var roomEl=document.getElementById("room");
 var statusEl=document.getElementById("status");
 var panelStatus=document.getElementById("panelStatus");
+
+function resizeCanvas(){
+    var rect=canvas.getBoundingClientRect();
+
+    var width=
+        Math.max(
+            1,
+            Math.floor(rect.width)
+        );
+
+    var height=
+        Math.max(
+            1,
+            Math.floor(rect.height)
+        );
+
+    if(
+        canvas.width!==width ||
+        canvas.height!==height
+    ){
+        canvas.width=width;
+        canvas.height=height;
+    }
+}
+
+window.addEventListener(
+    "resize",
+    resizeCanvas
+);
+
+window.addEventListener(
+    "orientationchange",
+    resizeCanvas
+);
+
+resizeCanvas();
 
 document.getElementById("rtcBadge").textContent=
     "WebRTC: "+
@@ -368,6 +407,30 @@ async function flushCandidates(){
     }
 }
 
+function forceResync(reason){
+
+    needKeyframe=true;
+    haveDecodedKey=false;
+
+    assemblies.clear();
+
+    try{
+        if(
+            decoder &&
+            decoder.state==="configured"
+        ){
+            decoder.reset();
+        }
+    }catch(_){}
+
+    setStatus(
+        "⏩ RESYNC H264<br>"+
+        reason+
+        " · loss "+
+        transportLosses
+    );
+}
+
 function initDecoder(){
 
     if(
@@ -430,7 +493,9 @@ function initDecoder(){
 
             console.error(error);
 
-            haveDecodedKey=false;
+            forceResync(
+                "decoder error"
+            );
 
             setStatus(
                 "❌ Decoder H264<br>"+
@@ -597,6 +662,34 @@ function feedH264(buffer){
             }
         );
 
+    if(needKeyframe){
+
+        if(!hasIdr){
+            return;
+        }
+
+        needKeyframe=false;
+        haveDecodedKey=false;
+    }
+
+    if(
+        decoder &&
+        decoder.state==="configured" &&
+        decoder.decodeQueueSize>8
+    ){
+
+        forceResync(
+            "decoder queue"
+        );
+
+        if(!hasIdr){
+            return;
+        }
+
+        needKeyframe=false;
+        haveDecodedKey=false;
+    }
+
     if(
         rxChunks<=5 ||
         rxChunks%30===0
@@ -682,6 +775,12 @@ function feedH264(buffer){
 
         console.error(error);
 
+        transportLosses++;
+
+        forceResync(
+            "decode exception"
+        );
+
         setStatus(
             "❌ decode()<br>"+
             String(
@@ -711,6 +810,21 @@ function receiveVideoPacket(buffer){
 
     var id=
         view.getUint32(4,false);
+
+    if(
+        lastCompletedFrameId!==null &&
+        id>lastCompletedFrameId+1 &&
+        !assemblies.has(id)
+    ){
+        transportLosses++;
+
+        forceResync(
+            "frame gap "+
+            lastCompletedFrameId+
+            " → "+
+            id
+        );
+    }
 
     var part=
         view.getUint16(8,false);
@@ -763,6 +877,8 @@ function receiveVideoPacket(buffer){
 
         assemblies.delete(id);
 
+        lastCompletedFrameId=id;
+
         var complete=
             concatBytes(
                 entry.parts
@@ -780,20 +896,32 @@ setInterval(
         var now=
             performance.now();
 
+        var expired=false;
+
         assemblies.forEach(
             function(value,key){
 
                 if(
                     now-value.created>
-                    1500
+                    500
                 ){
                     assemblies.delete(key);
+                    expired=true;
                 }
             }
         );
 
+        if(expired){
+
+            transportLosses++;
+
+            forceResync(
+                "fragment timeout"
+            );
+        }
+
     },
-    500
+    250
 );
 
 function setupVideoChannel(channel){
@@ -1001,44 +1129,15 @@ var lastMove=0;
 
 function getVideoRect(){
 
-    var width=
-        window.innerWidth;
+    var rect=
+        canvas.getBoundingClientRect();
 
-    var height=
-        window.innerHeight;
-
-    var aspect=
-        1280/720;
-
-    if(
-        width/height>
-        aspect
-    ){
-
-        var h=height;
-        var w=h*aspect;
-
-        return {
-            left:
-                (width-w)/2,
-            top:0,
-            width:w,
-            height:h
-        };
-
-    }else{
-
-        var ww=width;
-        var hh=ww/aspect;
-
-        return {
-            left:0,
-            top:
-                (height-hh)/2,
-            width:ww,
-            height:hh
-        };
-    }
+    return {
+        left:rect.left,
+        top:rect.top,
+        width:rect.width,
+        height:rect.height
+    };
 }
 
 function sendTouch(action,x,y){
