@@ -1,227 +1,1145 @@
 <!DOCTYPE html>
 <html lang="it">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
-    <meta name="apple-mobile-web-app-capable" content="yes">
-    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-    <meta name="theme-color" content="#0d0d11">
-    <meta name="description" content="Tesla Model 3 Ultra-Low Latency Android Auto Web Client">
-    <title>Tesla Android Auto Streamer</title>
-    <link rel="stylesheet" href="style.css">
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
+<meta name="theme-color" content="#000000">
+
+<title>Tesla Android Auto</title>
+
+<style>
+* {
+    box-sizing: border-box;
+    margin: 0;
+    padding: 0;
+    -webkit-tap-highlight-color: transparent;
+}
+
+html, body {
+    width: 100%;
+    height: 100%;
+    overflow: hidden;
+    background: #000;
+    color: white;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Arial, sans-serif;
+    touch-action: none;
+}
+
+#stage {
+    position: fixed;
+    inset: 0;
+    background: #000;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    overflow: hidden;
+}
+
+#canvas {
+    position: absolute;
+    width: 100%;
+    height: 100%;
+    object-fit: contain;
+    background: #000;
+}
+
+#status {
+    position: fixed;
+    top: 16px;
+    left: 16px;
+    z-index: 20;
+
+    max-width: 70vw;
+
+    padding: 9px 14px;
+
+    border-radius: 10px;
+
+    background: rgba(0,0,0,.78);
+    border: 1px solid rgba(255,255,255,.14);
+
+    font-family: monospace;
+    font-size: 13px;
+    line-height: 1.45;
+
+    pointer-events: none;
+}
+
+#settingsButton {
+    position: fixed;
+    right: 18px;
+    top: 16px;
+    z-index: 100;
+
+    border: 1px solid rgba(255,255,255,.18);
+    border-radius: 12px;
+
+    background: rgba(25,25,30,.95);
+    color: white;
+
+    padding: 11px 16px;
+
+    font-size: 15px;
+    font-weight: 600;
+
+    cursor: pointer;
+}
+
+#panel {
+    position: fixed;
+    inset: 0;
+    z-index: 200;
+
+    display: flex;
+    align-items: center;
+    justify-content: center;
+
+    background: rgba(0,0,0,.88);
+}
+
+#panel.hidden {
+    display: none;
+}
+
+.card {
+    width: min(620px, 92vw);
+
+    padding: 30px;
+
+    border-radius: 22px;
+
+    background: #15161b;
+    border: 1px solid rgba(255,255,255,.12);
+
+    box-shadow: 0 15px 50px rgba(0,0,0,.6);
+}
+
+h1 {
+    font-size: 27px;
+    margin-bottom: 7px;
+}
+
+.subtitle {
+    color: #9da2ad;
+    font-size: 14px;
+    line-height: 1.45;
+    margin-bottom: 24px;
+}
+
+label {
+    display: block;
+    margin-bottom: 8px;
+
+    font-size: 13px;
+    color: #b9bdc7;
+}
+
+input {
+    width: 100%;
+
+    padding: 16px;
+
+    border-radius: 13px;
+
+    border: 1px solid rgba(255,255,255,.16);
+    outline: none;
+
+    background: #22242b;
+    color: white;
+
+    font-size: 20px;
+    font-family: monospace;
+}
+
+input:focus {
+    border-color: #4285ff;
+}
+
+.hint {
+    margin-top: 9px;
+
+    color: #7f8591;
+
+    font-size: 12px;
+    line-height: 1.5;
+}
+
+#connectButton {
+    width: 100%;
+
+    margin-top: 20px;
+    padding: 16px;
+
+    border: none;
+    border-radius: 13px;
+
+    background: #3478f6;
+    color: white;
+
+    font-size: 17px;
+    font-weight: 700;
+
+    cursor: pointer;
+}
+
+#connectButton:active,
+#settingsButton:active {
+    transform: scale(.98);
+}
+
+#connectionMessage {
+    margin-top: 16px;
+
+    min-height: 22px;
+
+    font-size: 13px;
+    line-height: 1.45;
+
+    color: #9da2ad;
+
+    word-break: break-all;
+}
+
+.tech {
+    display: flex;
+    gap: 8px;
+    flex-wrap: wrap;
+
+    margin-top: 20px;
+}
+
+.badge {
+    padding: 7px 10px;
+
+    border-radius: 999px;
+
+    background: #23252d;
+
+    font-size: 11px;
+    color: #b8bcc6;
+}
+
+.version {
+    margin-top: 20px;
+
+    font-family: monospace;
+    font-size: 10px;
+
+    color: #606671;
+}
+
+.green { color: #50df85 !important; }
+.red   { color: #ff6969 !important; }
+.amber { color: #ffc55b !important; }
+
+@media (max-height: 550px) {
+    .card {
+        padding: 20px 24px;
+    }
+
+    h1 {
+        font-size: 22px;
+    }
+
+    .subtitle {
+        margin-bottom: 14px;
+    }
+
+    input {
+        padding: 12px;
+    }
+
+    #connectButton {
+        padding: 13px;
+        margin-top: 14px;
+    }
+}
+</style>
 </head>
+
 <body>
-    <div id="app-container">
-        <!-- Main Video / Rendering Stage -->
-        <main id="display-stage">
-            <!-- WebCodecs Hardware Accelerated Canvas (Primary Engine) -->
-            <canvas id="video-canvas" width="1280" height="720"></canvas>
-            
-            <!-- MSE Fallback Video Element (Secondary Engine) -->
-            <video id="video-player" muted playsinline autoplay disablepictureinpicture></video>
-            
-            <!-- Touch Capture Overlay -->
-            <div id="touch-surface"></div>
 
-            <!-- Standby / Reconnecting Screen -->
-            <div id="status-overlay" class="overlay-visible">
-                <div class="status-card">
-                    <div class="spinner-container">
-                        <div class="pulse-ring"></div>
-                        <div class="status-icon" id="status-icon">🚗</div>
-                    </div>
-                    <h2 id="status-title">In attesa dello Smartphone...</h2>
-                    <p id="status-desc">Attiva l'Hotspot 5GHz e avvia l'app (TaaDa / TesDisplay / Streamer) sul telefono.</p>
-                    
-                    <!-- Quick Preset Selectors for Easy Tesla Touchscreen Access -->
-                    <div class="preset-selector">
-                        <span class="preset-title">Seleziona la tua App:</span>
-                        <div class="preset-buttons">
-                            <button id="preset-taada" class="preset-btn active" data-url="ws://192.168.43.1:8080/stream">TaaDa (8080)</button>
-                            <button id="preset-tesdisplay" class="preset-btn" data-url="ws://192.168.43.1:8000/stream">TesDisplay (8000)</button>
-                            <button id="preset-custom" class="preset-btn" data-url="ws://192.168.43.1:8080/ws">Personalizzato</button>
-                        </div>
-                    </div>
+<div id="stage">
+    <canvas id="canvas" width="1280" height="720"></canvas>
+</div>
 
-                    <div class="quick-instructions">
-                        <span class="pill">📶 Wi-Fi: "Rimani connesso in Drive"</span>
-                        <span class="pill">🔊 Audio: Bluetooth Tesla</span>
-                    </div>
+<div id="status">
+    Tesla AntiGravity CLEAN v1<br>
+    In attesa...
+</div>
 
-                    <div class="action-row">
-                        <button id="btn-manual-connect" class="action-btn primary">Connetti Subito</button>
-                        <button id="btn-open-settings" class="action-btn secondary">⚙️ Opzioni IP</button>
-                    </div>
-                </div>
-            </div>
-        </main>
+<button
+    id="settingsButton"
+    type="button"
+    onclick="document.getElementById('panel').classList.remove('hidden')">
+    ⚙ IP
+</button>
 
-        <!-- Unobtrusive Floating Telemetry Pill / HUD -->
-        <header id="telemetry-bar">
-            <div class="telemetry-item status-indicator">
-                <span class="status-dot" id="dot-indicator"></span>
-                <span id="txt-conn-status">Connessione...</span>
-            </div>
-            <div class="telemetry-item">
-                <span class="label">ENGINE:</span>
-                <span class="value" id="val-engine">Auto</span>
-            </div>
-            <div class="telemetry-item">
-                <span class="label">FPS:</span>
-                <span class="value" id="val-fps">0</span>
-            </div>
-            <div class="telemetry-item">
-                <span class="label">LATENZA:</span>
-                <span class="value" id="val-latency">-- ms</span>
-            </div>
-            <div class="telemetry-item">
-                <span class="label">BUFFER:</span>
-                <span class="value" id="val-buffer">0 ms</span>
-            </div>
-            <div class="telemetry-actions">
-                <button id="btn-toggle-hud" class="icon-btn" title="Dettagli diagnostici">📊</button>
-                <button id="btn-settings" class="icon-btn" title="Impostazioni">⚙️</button>
-                <button id="btn-fullscreen" class="icon-btn" title="Schermo intero">⛶</button>
-            </div>
-        </header>
+<div id="panel">
+    <div class="card">
 
-        <!-- Detailed Diagnostics Drawer / Modal -->
-        <div id="diagnostics-modal" class="modal-hidden">
-            <div class="modal-content">
-                <div class="modal-header">
-                    <h3>Diagnostica Stream & Hardware MCU2</h3>
-                    <button id="btn-close-diag" class="close-btn">×</button>
-                </div>
-                <div class="diag-grid">
-                    <div class="diag-card">
-                        <span class="diag-label">Codec & Profilo</span>
-                        <span class="diag-val" id="diag-codec">H.264 Baseline L3.1</span>
-                    </div>
-                    <div class="diag-card">
-                        <span class="diag-label">Risoluzione Stream</span>
-                        <span class="diag-val" id="diag-resolution">1280 × 720</span>
-                    </div>
-                    <div class="diag-card">
-                        <span class="diag-label">Bitrate Medio</span>
-                        <span class="diag-val" id="diag-bitrate">0 kbps</span>
-                    </div>
-                    <div class="diag-card">
-                        <span class="diag-label">Frame Decodificati</span>
-                        <span class="diag-val" id="diag-frames-decoded">0</span>
-                    </div>
-                    <div class="diag-card">
-                        <span class="diag-label">Frame Persi / Scartati</span>
-                        <span class="diag-val" id="diag-frames-dropped">0</span>
-                    </div>
-                    <div class="diag-card">
-                        <span class="diag-label">Memoria Buffer Video</span>
-                        <span class="diag-val" id="diag-memory">Zero-Leak Guard Attivo</span>
-                    </div>
-                </div>
-            </div>
+        <h1>Android Auto</h1>
+
+        <div class="subtitle">
+            Tesla Model 3 2019 · MCU2 Intel Atom<br>
+            Collegamento diretto al telefono
         </div>
 
-        <!-- Settings Modal -->
-        <div id="settings-modal" class="modal-hidden">
-            <div class="modal-content">
-                <div class="modal-header">
-                    <h3>Impostazioni Connessione & Rendering</h3>
-                    <button id="btn-close-settings" class="close-btn">×</button>
-                </div>
-                <div class="settings-body">
-                    <div class="form-group">
-                        <label for="input-ws-url">Indirizzo WebSocket Server (Telefono)</label>
-                        <input type="text" id="input-ws-url" placeholder="10.232.34.83">
-                        <small>Puoi inserire anche solo l’IP del telefono, es. 10.232.34.83</small>
-                    </div>
+        <label for="endpoint">
+            IP del telefono / WebSocket
+        </label>
 
-                    <div class="form-group">
-                        <label for="select-engine">Motore di Rendering</label>
-                        <select id="select-engine">
-                            <option value="auto">Automatico (WebCodecs se disponibile)</option>
-                            <option value="webcodecs">Forza WebCodecs API (Zero Buffer)</option>
-                            <option value="mse">Forza MediaSource Extensions (MSE fMP4)</option>
-                        </select>
-                    </div>
+        <input
+            id="endpoint"
+            type="text"
+            inputmode="url"
+            autocapitalize="none"
+            autocomplete="off"
+            spellcheck="false"
+            placeholder="10.232.34.83">
 
-                    <div class="form-group">
-                        <label for="select-aspect">Proporzioni Schermo</label>
-                        <select id="select-aspect">
-                            <option value="contain">Adatta (16:9 con barre)</option>
-                            <option value="cover">Riempi Schermo Intero</option>
-                            <option value="stretch">Allunga a Tutto Schermo</option>
-                        </select>
-                    </div>
-
-                    <div class="form-group checkbox-group">
-                        <label>
-                            <input type="checkbox" id="check-aggressive-purge" checked>
-                            Svuotamento Aggressivo Buffer (Anti-Crash Intel Atom)
-                        </label>
-                    </div>
-
-                    <div class="form-actions">
-                        <button id="btn-save-settings" class="action-btn primary">SALVA E CONNETTI</button>
-                    </div>
-                </div>
-            </div>
+        <div class="hint">
+            Puoi scrivere semplicemente <b>10.232.34.83</b>.<br>
+            Verrà trasformato automaticamente in
+            <b>ws://10.232.34.83:8080/ws</b>.
         </div>
+
+        <button id="connectButton" type="button">
+            CONNETTI
+        </button>
+
+        <div id="connectionMessage">
+            Inserisci l'IP mostrato da AA Web Bridge.
+        </div>
+
+        <div class="tech">
+            <div class="badge" id="secureBadge">Secure context: ...</div>
+            <div class="badge" id="codecBadge">WebCodecs: ...</div>
+            <div class="badge">H.264 · 1280×720 · 30fps</div>
+        </div>
+
+        <div class="version">
+            CLEAN FRONTEND v1 · 2026-08-16
+        </div>
+
     </div>
+</div>
 
-    <!-- Scripts -->
-    <script src="js/touch.js"></script>
-    <script src="js/player.js"></script>
-    <script src="js/ws-client.js"></script>
-    <script src="js/hud.js"></script>
-    <script>
-        window.addEventListener('DOMContentLoaded', () => {
-            console.log('[Tesla-AA] Inizializzazione Client Web...');
-            window.App = {
-                touch: new TouchHandler('touch-surface'),
-                player: new TeslaStreamPlayer(
-                    document.getElementById('video-canvas'),
-                    document.getElementById('video-player')
-                ),
-                ws: new StreamWebSocketClient(),
-                hud: new TelemetryHUD()
-            };
+<script>
+"use strict";
 
-            // Connect pipeline components
-            window.App.ws.onFrameReceived = (frameData, timestamp) => {
-                window.App.player.feedChunk(frameData, timestamp);
-            };
+const canvas = document.getElementById("canvas");
+const ctx = canvas.getContext(
+    "2d",
+    {
+        alpha: false,
+        desynchronized: true
+    }
+);
 
-            window.App.touch.onPointerEvent = (eventData) => {
-                window.App.ws.sendTouch(eventData);
-                // Visual touch ripple on screen
-                if (
-                    window.App.player &&
-                    typeof window.App.player.addTouchPoint === 'function'
-                ) {
-                    window.App.player.addTouchPoint(eventData.x, eventData.y);
-                }
-            };
+const statusEl = document.getElementById("status");
+const panelEl = document.getElementById("panel");
+const endpointEl = document.getElementById("endpoint");
+const connectButton = document.getElementById("connectButton");
+const messageEl = document.getElementById("connectionMessage");
 
-            window.App.ws.onStateChange = (state, message) => {
-                window.App.hud.updateConnectionState(state, message);
-            };
+let ws = null;
+let decoder = null;
 
-            // Setup Preset Buttons
-            const presetButtons = document.querySelectorAll('.preset-btn');
-            presetButtons.forEach(btn => {
-                btn.addEventListener('click', () => {
-                    presetButtons.forEach(b => b.classList.remove('active'));
-                    btn.classList.add('active');
-                    const url = btn.getAttribute('data-url');
-                    if (url) {
-                        window.App.ws.setServerUrl(url);
-                    }
-                });
-            });
+let sps = null;
+let pps = null;
 
-            // Start connection
-            window.App.ws.connect();
+let haveDecodedKey = false;
+let timestamp = 0;
+
+let packets = 0;
+let bytes = 0;
+let frames = 0;
+
+let activePointer = null;
+
+function setStatus(text) {
+    statusEl.innerHTML = text;
+}
+
+function setMessage(text, cls) {
+    messageEl.className = cls || "";
+    messageEl.textContent = text;
+}
+
+document.getElementById("secureBadge").textContent =
+    "Secure context: " + (window.isSecureContext ? "✅" : "❌");
+
+document.getElementById("codecBadge").textContent =
+    "WebCodecs: " +
+    (
+        typeof window.VideoDecoder === "function" &&
+        typeof window.EncodedVideoChunk === "function"
+            ? "✅"
+            : "❌"
+    );
+
+function normalizeEndpoint(input) {
+
+    let value = String(input || "").trim();
+
+    if (!value) {
+        throw new Error("Inserisci l'IP del telefono");
+    }
+
+    if (
+        !value.startsWith("ws://") &&
+        !value.startsWith("wss://")
+    ) {
+        value = "ws://" + value;
+    }
+
+    let url;
+
+    try {
+        url = new URL(value);
+    } catch (_) {
+        throw new Error("Indirizzo non valido");
+    }
+
+    if (
+        url.protocol !== "ws:" &&
+        url.protocol !== "wss:"
+    ) {
+        throw new Error("Usa un IP oppure ws:// / wss://");
+    }
+
+    if (!url.hostname) {
+        throw new Error("IP mancante");
+    }
+
+    if (!url.port) {
+        url.port = "8080";
+    }
+
+    if (
+        !url.pathname ||
+        url.pathname === "/" ||
+        url.pathname === "/stream" ||
+        url.pathname === "/stream/"
+    ) {
+        url.pathname = "/ws";
+    }
+
+    url.search = "";
+    url.hash = "";
+
+    return url.protocol + "//" + url.host + url.pathname;
+}
+
+function concatBytes(parts) {
+
+    let length = 0;
+
+    for (const part of parts) {
+        length += part.length;
+    }
+
+    const output = new Uint8Array(length);
+
+    let offset = 0;
+
+    for (const part of parts) {
+        output.set(part, offset);
+        offset += part.length;
+    }
+
+    return output;
+}
+
+function splitAnnexB(data) {
+
+    const starts = [];
+
+    for (let i = 0; i < data.length - 3; i++) {
+
+        if (
+            data[i] === 0 &&
+            data[i + 1] === 0 &&
+            data[i + 2] === 1
+        ) {
+            starts.push({ pos: i, sc: 3 });
+            i += 2;
+        }
+
+        else if (
+            i < data.length - 4 &&
+            data[i] === 0 &&
+            data[i + 1] === 0 &&
+            data[i + 2] === 0 &&
+            data[i + 3] === 1
+        ) {
+            starts.push({ pos: i, sc: 4 });
+            i += 3;
+        }
+    }
+
+    if (starts.length === 0) {
+
+        if (data.length === 0) {
+            return [];
+        }
+
+        return [{
+            type: data[0] & 0x1F,
+            bytes: data
+        }];
+    }
+
+    const nalus = [];
+
+    for (let i = 0; i < starts.length; i++) {
+
+        const start = starts[i];
+
+        const end =
+            i + 1 < starts.length
+                ? starts[i + 1].pos
+                : data.length;
+
+        const header = start.pos + start.sc;
+
+        if (header >= end) {
+            continue;
+        }
+
+        nalus.push({
+            type: data[header] & 0x1F,
+            bytes: data.slice(start.pos, end)
         });
-    </script>
+    }
+
+    return nalus;
+}
+
+function initializeDecoder() {
+
+    if (
+        typeof window.VideoDecoder !== "function" ||
+        typeof window.EncodedVideoChunk !== "function"
+    ) {
+        throw new Error(
+            "Questo browser non espone WebCodecs VideoDecoder"
+        );
+    }
+
+    if (decoder && decoder.state !== "closed") {
+        try {
+            decoder.close();
+        } catch (_) {}
+    }
+
+    haveDecodedKey = false;
+    timestamp = 0;
+
+    decoder = new VideoDecoder({
+
+        output(frame) {
+
+            ctx.drawImage(
+                frame,
+                0,
+                0,
+                canvas.width,
+                canvas.height
+            );
+
+            frame.close();
+
+            frames++;
+
+            if (
+                frames === 1 ||
+                frames % 30 === 0
+            ) {
+                setStatus(
+                    "✅ ANDROID AUTO LIVE<br>" +
+                    frames +
+                    " frame · " +
+                    packets +
+                    " pacchetti"
+                );
+            }
+        },
+
+        error(error) {
+
+            console.error(
+                "VideoDecoder:",
+                error
+            );
+
+            haveDecodedKey = false;
+
+            setStatus(
+                "❌ Decoder H264<br>" +
+                String(error.message || error)
+            );
+        }
+    });
+
+    decoder.configure({
+        codec: "avc1.42E01F",
+        optimizeForLatency: true,
+        hardwareAcceleration: "prefer-hardware"
+    });
+}
+
+function processVideo(buffer) {
+
+    const data = new Uint8Array(buffer);
+
+    packets++;
+    bytes += data.length;
+
+    const nalus = splitAnnexB(data);
+
+    const types = nalus.map(n => n.type);
+
+    for (const nalu of nalus) {
+
+        if (nalu.type === 7) {
+            sps = nalu.bytes;
+        }
+
+        if (nalu.type === 8) {
+            pps = nalu.bytes;
+        }
+    }
+
+    const hasSps = types.includes(7);
+    const hasPps = types.includes(8);
+    const hasIdr = types.includes(5);
+
+    const hasPicture =
+        types.some(type => type >= 1 && type <= 5);
+
+    if (
+        packets <= 5 ||
+        packets % 30 === 0
+    ) {
+        setStatus(
+            "📡 H264 RX " +
+            packets +
+            " · " +
+            Math.round(bytes / 1024) +
+            " KB<br>" +
+            "NAL " +
+            types.join(",") +
+            " · SPS " +
+            (sps ? "✅" : "❌") +
+            " · PPS " +
+            (pps ? "✅" : "❌") +
+            " · IDR " +
+            (hasIdr ? "✅" : "❌")
+        );
+    }
+
+    if (!hasPicture) {
+        return;
+    }
+
+    if (
+        !decoder ||
+        decoder.state !== "configured"
+    ) {
+        return;
+    }
+
+    if (
+        !haveDecodedKey &&
+        !hasIdr
+    ) {
+        return;
+    }
+
+    let chunkData = data;
+
+    if (hasIdr) {
+
+        const prefix = [];
+
+        if (!hasSps && sps) {
+            prefix.push(sps);
+        }
+
+        if (!hasPps && pps) {
+            prefix.push(pps);
+        }
+
+        if (prefix.length) {
+            chunkData = concatBytes([
+                ...prefix,
+                data
+            ]);
+        }
+    }
+
+    try {
+
+        decoder.decode(
+            new EncodedVideoChunk({
+                type: hasIdr ? "key" : "delta",
+                timestamp: timestamp += 33333,
+                data: chunkData
+            })
+        );
+
+        if (hasIdr) {
+            haveDecodedKey = true;
+        }
+
+    } catch (error) {
+
+        console.error(
+            "decode():",
+            error
+        );
+
+        setStatus(
+            "❌ decode()<br>" +
+            String(error.message || error)
+        );
+    }
+}
+
+function connect(endpoint) {
+
+    let normalized;
+
+    try {
+
+        normalized =
+            normalizeEndpoint(endpoint);
+
+    } catch (error) {
+
+        setMessage(
+            "❌ " + error.message,
+            "red"
+        );
+
+        return;
+    }
+
+    endpointEl.value = normalized;
+
+    localStorage.setItem(
+        "aa_bridge_endpoint",
+        normalized
+    );
+
+    if (ws) {
+
+        try {
+            ws.onclose = null;
+            ws.close();
+        } catch (_) {}
+
+        ws = null;
+    }
+
+    packets = 0;
+    bytes = 0;
+    frames = 0;
+
+    sps = null;
+    pps = null;
+
+    setMessage(
+        "🔄 Connessione a " + normalized,
+        "amber"
+    );
+
+    setStatus(
+        "🔄 Connessione...<br>" +
+        normalized
+    );
+
+    try {
+
+        initializeDecoder();
+
+    } catch (error) {
+
+        setMessage(
+            "⚠️ " + error.message,
+            "amber"
+        );
+
+        setStatus(
+            "⚠️ WebCodecs non disponibile"
+        );
+
+        /*
+         * Continuiamo comunque ad aprire il socket:
+         * così possiamo capire separatamente se la Tesla
+         * raggiunge il telefono.
+         */
+    }
+
+    try {
+
+        ws = new WebSocket(normalized);
+        ws.binaryType = "arraybuffer";
+
+    } catch (error) {
+
+        setMessage(
+            "❌ WebSocket bloccato: " +
+            String(error.message || error),
+            "red"
+        );
+
+        return;
+    }
+
+    ws.onopen = function() {
+
+        setMessage(
+            "✅ TELEFONO CONNESSO · " +
+            normalized,
+            "green"
+        );
+
+        setStatus(
+            "✅ SOCKET CONNESSO<br>" +
+            normalized
+        );
+
+        panelEl.classList.add("hidden");
+    };
+
+    ws.onmessage = function(event) {
+
+        if (event.data instanceof ArrayBuffer) {
+
+            processVideo(event.data);
+
+            return;
+        }
+
+        if (event.data instanceof Blob) {
+
+            event.data
+                .arrayBuffer()
+                .then(processVideo)
+                .catch(function(){});
+        }
+    };
+
+    ws.onerror = function() {
+
+        const mixed =
+            window.location.protocol === "https:" &&
+            normalized.startsWith("ws://");
+
+        if (mixed) {
+
+            setMessage(
+                "❌ Connessione fallita. Possibile blocco HTTPS → ws:// locale del browser.",
+                "red"
+            );
+
+            setStatus(
+                "❌ WS LOCALE BLOCCATO?<br>" +
+                normalized
+            );
+
+        } else {
+
+            setMessage(
+                "❌ WebSocket non raggiungibile: " +
+                normalized,
+                "red"
+            );
+
+            setStatus(
+                "❌ SOCKET NON RAGGIUNGIBILE"
+            );
+        }
+    };
+
+    ws.onclose = function() {
+
+        if (!panelEl.classList.contains("hidden")) {
+            return;
+        }
+
+        setStatus(
+            "⚠️ Socket disconnesso<br>" +
+            "Apri ⚙ IP per riconnettere"
+        );
+    };
+}
+
+connectButton.addEventListener(
+    "click",
+    function() {
+        connect(endpointEl.value);
+    }
+);
+
+endpointEl.addEventListener(
+    "keydown",
+    function(event) {
+
+        if (event.key === "Enter") {
+
+            event.preventDefault();
+            connect(endpointEl.value);
+        }
+    }
+);
+
+const saved =
+    localStorage.getItem(
+        "aa_bridge_endpoint"
+    );
+
+if (saved) {
+
+    try {
+        endpointEl.value =
+            normalizeEndpoint(saved);
+    } catch (_) {
+        endpointEl.value = "";
+    }
+}
+
+/*
+ * Mappatura touch sul contenuto 16:9 reale,
+ * non sulle eventuali barre nere.
+ */
+
+function getVideoRect() {
+
+    const vw = window.innerWidth;
+    const vh = window.innerHeight;
+
+    const aspect = 1280 / 720;
+
+    let width;
+    let height;
+    let left;
+    let top;
+
+    if (vw / vh > aspect) {
+
+        height = vh;
+        width = vh * aspect;
+
+        left = (vw - width) / 2;
+        top = 0;
+
+    } else {
+
+        width = vw;
+        height = vw / aspect;
+
+        left = 0;
+        top = (vh - height) / 2;
+    }
+
+    return {
+        left,
+        top,
+        width,
+        height
+    };
+}
+
+function sendPointer(action, clientX, clientY) {
+
+    if (
+        !ws ||
+        ws.readyState !== WebSocket.OPEN
+    ) {
+        return;
+    }
+
+    const rect = getVideoRect();
+
+    let x =
+        (clientX - rect.left) /
+        rect.width;
+
+    let y =
+        (clientY - rect.top) /
+        rect.height;
+
+    if (
+        x < 0 ||
+        x > 1 ||
+        y < 0 ||
+        y > 1
+    ) {
+        return;
+    }
+
+    x = Math.max(0, Math.min(1, x));
+    y = Math.max(0, Math.min(1, y));
+
+    ws.send(
+        action +
+        "," +
+        x.toFixed(4) +
+        "," +
+        y.toFixed(4)
+    );
+}
+
+if (window.PointerEvent) {
+
+    document.getElementById("stage")
+        .addEventListener(
+            "pointerdown",
+            function(event) {
+
+                activePointer =
+                    event.pointerId;
+
+                sendPointer(
+                    0,
+                    event.clientX,
+                    event.clientY
+                );
+            }
+        );
+
+    document.getElementById("stage")
+        .addEventListener(
+            "pointermove",
+            function(event) {
+
+                if (
+                    activePointer !==
+                    event.pointerId
+                ) {
+                    return;
+                }
+
+                sendPointer(
+                    2,
+                    event.clientX,
+                    event.clientY
+                );
+            }
+        );
+
+    document.getElementById("stage")
+        .addEventListener(
+            "pointerup",
+            function(event) {
+
+                if (
+                    activePointer !==
+                    event.pointerId
+                ) {
+                    return;
+                }
+
+                sendPointer(
+                    1,
+                    event.clientX,
+                    event.clientY
+                );
+
+                activePointer = null;
+            }
+        );
+
+    document.getElementById("stage")
+        .addEventListener(
+            "pointercancel",
+            function(event) {
+
+                if (
+                    activePointer !==
+                    event.pointerId
+                ) {
+                    return;
+                }
+
+                activePointer = null;
+            }
+        );
+
+} else {
+
+    const stage =
+        document.getElementById("stage");
+
+    stage.addEventListener(
+        "touchstart",
+        function(event) {
+
+            event.preventDefault();
+
+            const touch =
+                event.changedTouches[0];
+
+            sendPointer(
+                0,
+                touch.clientX,
+                touch.clientY
+            );
+        },
+        { passive: false }
+    );
+
+    stage.addEventListener(
+        "touchmove",
+        function(event) {
+
+            event.preventDefault();
+
+            const touch =
+                event.changedTouches[0];
+
+            sendPointer(
+                2,
+                touch.clientX,
+                touch.clientY
+            );
+        },
+        { passive: false }
+    );
+
+    stage.addEventListener(
+        "touchend",
+        function(event) {
+
+            event.preventDefault();
+
+            const touch =
+                event.changedTouches[0];
+
+            sendPointer(
+                1,
+                touch.clientX,
+                touch.clientY
+            );
+        },
+        { passive: false }
+    );
+}
+
+setStatus(
+    "Tesla AntiGravity CLEAN v1<br>" +
+    "WebCodecs " +
+    (
+        typeof window.VideoDecoder === "function"
+            ? "✅"
+            : "❌"
+    )
+);
+</script>
+
 </body>
 </html>
