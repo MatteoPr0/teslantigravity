@@ -213,6 +213,10 @@ var pps=null;
 var haveDecodedKey=false;
 var frameTimestamp=0;
 
+var pendingFrame=null;
+var lastRenderAt=0;
+var RENDER_INTERVAL=1000/30;
+
 var rxChunks=0;
 var rxBytes=0;
 var decodedFrames=0;
@@ -432,31 +436,15 @@ function initDecoder(){
 
         output:function(frame){
 
-            ctx.drawImage(
-                frame,
-                0,
-                0,
-                canvas.width,
-                canvas.height
-            );
-
-            frame.close();
-
             decodedFrames++;
-            fpsWindowFrames++;
 
-            var fpsNow=performance.now();
-            var fpsElapsed=fpsNow-fpsWindowStart;
-
-            if(fpsElapsed>=1000){
-                decodedFps=
-                    fpsWindowFrames*
-                    1000/
-                    fpsElapsed;
-
-                fpsWindowFrames=0;
-                fpsWindowStart=fpsNow;
+            if(pendingFrame){
+                try{
+                    pendingFrame.close();
+                }catch(_){}
             }
+
+            pendingFrame=frame;
 
             if(
                 decodedFrames===1 ||
@@ -495,6 +483,49 @@ function initDecoder(){
         hardwareAcceleration:"prefer-hardware"
     });
 }
+
+function renderLoop(now){
+
+    if(
+        pendingFrame &&
+        now-lastRenderAt>=RENDER_INTERVAL
+    ){
+
+        var frame=pendingFrame;
+        pendingFrame=null;
+
+        ctx.drawImage(
+            frame,
+            0,
+            0,
+            canvas.width,
+            canvas.height
+        );
+
+        frame.close();
+
+        lastRenderAt=now;
+        fpsWindowFrames++;
+
+        var elapsed=
+            now-fpsWindowStart;
+
+        if(elapsed>=1000){
+
+            decodedFps=
+                fpsWindowFrames*
+                1000/
+                elapsed;
+
+            fpsWindowFrames=0;
+            fpsWindowStart=now;
+        }
+    }
+
+    requestAnimationFrame(renderLoop);
+}
+
+requestAnimationFrame(renderLoop);
 
 function concatBytes(parts){
 
@@ -1317,7 +1348,7 @@ async function updateRtcStats(){
 function renderDiag(){
 
     diagEl.innerHTML=
-        "Decoder: "+
+        "Render: "+
         decodedFps.toFixed(1)+
         " fps<br>"+
         "TX video: "+
