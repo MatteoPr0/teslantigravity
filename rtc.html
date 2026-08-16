@@ -984,14 +984,23 @@ function setupControlChannel(channel){
 
 function createPeer(){
 
-    pc=new RTCPeerConnection({
-        iceServers:[
-            {
-                urls:
-                    "stun:stun.cloudflare.com:3478"
+    var localOnly=
+        new URLSearchParams(
+            window.location.search
+        ).get("ice")==="local";
+
+    pc=new RTCPeerConnection(
+        localOnly
+            ? {iceServers:[]}
+            : {
+                iceServers:[
+                    {
+                        urls:
+                            "stun:stun.cloudflare.com:3478"
+                    }
+                ]
             }
-        ]
-    });
+    );
 
     pc.onicecandidate=
         async function(event){
