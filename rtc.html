@@ -235,6 +235,9 @@ var lastPhoneStatsAt=0;
 var touchRtt=null;
 var iceRtt=null;
 var icePath="-";
+var iceLocal="-";
+var iceRemote="-";
+var iceCapacity=null;
 
 var canvas=document.getElementById("canvas");
 
@@ -1340,6 +1343,53 @@ async function updateRtcStats(){
                     ?remote.candidateType
                     :"?"
                 );
+
+            function candidateText(c){
+
+                if(!c){
+                    return "-";
+                }
+
+                var address=
+                    c.address ||
+                    c.ip ||
+                    "(hidden)";
+
+                var port=
+                    c.port!==undefined
+                        ? c.port
+                        : "?";
+
+                var protocol=
+                    c.protocol ||
+                    "?";
+
+                var type=
+                    c.candidateType ||
+                    "?";
+
+                return (
+                    type+" "+
+                    protocol+" "+
+                    address+":"+
+                    port
+                );
+            }
+
+            iceLocal=
+                candidateText(local);
+
+            iceRemote=
+                candidateText(remote);
+
+            if(
+                typeof pair.availableOutgoingBitrate===
+                "number"
+            ){
+                iceCapacity=
+                    pair.availableOutgoingBitrate/
+                    1000000;
+            }
         }
 
     }catch(_){}
@@ -1378,7 +1428,20 @@ function renderDiag(){
         )+
         "<br>"+
         "Path: "+
-        icePath;
+        icePath+
+        "<br>"+
+        "Local: "+
+        iceLocal+
+        "<br>"+
+        "Remote: "+
+        iceRemote+
+        "<br>"+
+        "ICE capacity: "+
+        (
+            iceCapacity===null
+                ?"—"
+                :iceCapacity.toFixed(1)+" Mbps"
+        );
 }
 
 setInterval(
