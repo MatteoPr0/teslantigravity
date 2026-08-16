@@ -20,26 +20,63 @@ class StreamWebSocketClient {
         this.url = this.resolveServerUrl();
     }
 
+    normalizeServerUrl(input) {
+        let value = String(input || '').trim();
+
+        if (!value) {
+            throw new Error('Indirizzo vuoto');
+        }
+
+        if (!value.startsWith('ws://') && !value.startsWith('wss://')) {
+            value = 'ws://' + value;
+        }
+
+        const parsed = new URL(value);
+
+        if (!parsed.port) {
+            parsed.port = '8080';
+        }
+
+        if (
+            !parsed.pathname ||
+            parsed.pathname === '/' ||
+            parsed.pathname === '/stream' ||
+            parsed.pathname === '/stream/'
+        ) {
+            parsed.pathname = '/ws';
+        }
+
+        return parsed.protocol + '//' + parsed.host + parsed.pathname;
+    }
+
     resolveServerUrl() {
         const stored = localStorage.getItem('tesla_ws_url');
         if (stored && stored.trim().length > 0) {
-            return stored.trim();
+            try {
+                const normalized = this.normalizeServerUrl(stored);
+                localStorage.setItem('tesla_ws_url', normalized);
+                return normalized;
+            } catch (_) {
+                localStorage.removeItem('tesla_ws_url');
+            }
         }
 
         // If served from local phone server (e.g. http://192.168.43.1:8080)
         if (window.location.host && !window.location.host.includes('github.io') && !window.location.host.includes('localhost:5500')) {
             const proto = window.location.protocol === 'https:' ? 'wss://' : 'ws://';
-            return `${proto}${window.location.host}/stream`;
+            return `${proto}${window.location.host}/ws`;
         }
 
         // Default for GitHub Pages: Hotspot default gateway
-        return 'ws://192.168.43.1:8080/stream';
+        return 'ws://192.168.43.1:8080/ws';
     }
 
     setServerUrl(newUrl) {
-        this.url = newUrl;
-        localStorage.setItem('tesla_ws_url', newUrl);
+        const normalized = this.normalizeServerUrl(newUrl);
+        this.url = normalized;
+        localStorage.setItem('tesla_ws_url', normalized);
         this.reconnect();
+        return normalized;
     }
 
     connect() {

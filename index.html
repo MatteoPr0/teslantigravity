@@ -39,7 +39,7 @@
                         <div class="preset-buttons">
                             <button id="preset-taada" class="preset-btn active" data-url="ws://192.168.43.1:8080/stream">TaaDa (8080)</button>
                             <button id="preset-tesdisplay" class="preset-btn" data-url="ws://192.168.43.1:8000/stream">TesDisplay (8000)</button>
-                            <button id="preset-custom" class="preset-btn" data-url="ws://192.168.43.1:8080">Personalizzato</button>
+                            <button id="preset-custom" class="preset-btn" data-url="ws://192.168.43.1:8080/ws">Personalizzato</button>
                         </div>
                     </div>
 
@@ -131,8 +131,8 @@
                 <div class="settings-body">
                     <div class="form-group">
                         <label for="input-ws-url">Indirizzo WebSocket Server (Telefono)</label>
-                        <input type="text" id="input-ws-url" placeholder="ws://192.168.43.1:8080/stream">
-                        <small>IP tipico hotspot Android: 192.168.43.1</small>
+                        <input type="text" id="input-ws-url" placeholder="10.232.34.83">
+                        <small>Puoi inserire anche solo l’IP del telefono, es. 10.232.34.83</small>
                     </div>
 
                     <div class="form-group">
@@ -161,7 +161,7 @@
                     </div>
 
                     <div class="form-actions">
-                        <button id="btn-save-settings" class="action-btn primary">Salva e Riavvia</button>
+                        <button id="btn-save-settings" class="action-btn primary">SALVA E CONNETTI</button>
                     </div>
                 </div>
             </div>

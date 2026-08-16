@@ -27,6 +27,7 @@ class TelemetryHUD {
 
         // Buttons
         this.btnManualConnect = document.getElementById('btn-manual-connect');
+        this.btnOpenSettings = document.getElementById('btn-open-settings');
         this.btnToggleHud = document.getElementById('btn-toggle-hud');
         this.btnSettings = document.getElementById('btn-settings');
         this.btnFullscreen = document.getElementById('btn-fullscreen');
@@ -50,6 +51,13 @@ class TelemetryHUD {
                 if (window.App && window.App.ws) {
                     window.App.ws.reconnect();
                 }
+            });
+        }
+
+        if (this.btnOpenSettings) {
+            this.btnOpenSettings.addEventListener('click', () => {
+                this.loadSettings();
+                this.toggleModal(this.settingsModal);
             });
         }
 
@@ -201,7 +209,8 @@ class TelemetryHUD {
         if (this.inputWsUrl && this.inputWsUrl.value.trim().length > 0) {
             const newUrl = this.inputWsUrl.value.trim();
             if (window.App && window.App.ws) {
-                window.App.ws.setServerUrl(newUrl);
+                const normalized = window.App.ws.setServerUrl(newUrl);
+                this.inputWsUrl.value = normalized;
             }
         }
 
