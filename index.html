@@ -178,10 +178,10 @@
             console.log('[Tesla-AA] Inizializzazione Client Web...');
             window.App = {
                 touch: new TouchHandler('touch-surface'),
-                player: new VideoPlayer({
-                    canvasId: 'video-canvas',
-                    videoId: 'video-player'
-                }),
+                player: new TeslaStreamPlayer(
+                    document.getElementById('video-canvas'),
+                    document.getElementById('video-player')
+                ),
                 ws: new StreamWebSocketClient(),
                 hud: new TelemetryHUD()
             };
@@ -194,7 +194,10 @@
             window.App.touch.onPointerEvent = (eventData) => {
                 window.App.ws.sendTouch(eventData);
                 // Visual touch ripple on screen
-                if (window.App.player) {
+                if (
+                    window.App.player &&
+                    typeof window.App.player.addTouchPoint === 'function'
+                ) {
                     window.App.player.addTouchPoint(eventData.x, eventData.y);
                 }
             };
