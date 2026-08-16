@@ -1,0 +1,1163 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
+<title>Tesla Android Auto WebRTC</title>
+
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+html,body{
+    width:100%;
+    height:100%;
+    overflow:hidden;
+    background:#000;
+    color:#fff;
+    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Arial,sans-serif;
+    touch-action:none
+}
+#stage{
+    position:fixed;
+    inset:0;
+    background:#000
+}
+#canvas{
+    width:100%;
+    height:100%;
+    object-fit:contain;
+    background:#000
+}
+#status{
+    position:fixed;
+    top:14px;
+    left:14px;
+    z-index:20;
+    padding:9px 13px;
+    border-radius:10px;
+    background:rgba(0,0,0,.8);
+    border:1px solid rgba(255,255,255,.15);
+    font:12px/1.4 monospace;
+    pointer-events:none
+}
+#gear{
+    position:fixed;
+    top:14px;
+    right:16px;
+    z-index:30;
+    padding:11px 15px;
+    border-radius:11px;
+    border:1px solid rgba(255,255,255,.18);
+    background:#202228;
+    color:white;
+    font-size:16px
+}
+#panel{
+    position:fixed;
+    inset:0;
+    z-index:50;
+    display:flex;
+    align-items:center;
+    justify-content:center;
+    background:rgba(0,0,0,.9)
+}
+#panel.hidden{display:none}
+.card{
+    width:min(620px,92vw);
+    padding:28px;
+    border-radius:22px;
+    background:#15171d;
+    border:1px solid #292c35
+}
+h1{
+    font-size:28px;
+    margin-bottom:7px
+}
+.sub{
+    color:#9da3af;
+    line-height:1.45;
+    margin-bottom:20px
+}
+label{
+    display:block;
+    color:#bbc0ca;
+    margin-bottom:8px
+}
+input{
+    width:100%;
+    padding:15px;
+    border-radius:13px;
+    border:1px solid #3a3e49;
+    background:#22252d;
+    color:#fff;
+    font:21px monospace
+}
+#connect{
+    width:100%;
+    min-height:55px;
+    margin-top:15px;
+    border:0;
+    border-radius:13px;
+    background:#e82127;
+    color:#fff;
+    font-size:17px;
+    font-weight:700
+}
+#panelStatus{
+    margin-top:15px;
+    color:#ffd166;
+    font-size:13px;
+    line-height:1.4
+}
+.badges{
+    margin-top:17px;
+    display:flex;
+    gap:8px;
+    flex-wrap:wrap
+}
+.badge{
+    padding:7px 10px;
+    border-radius:999px;
+    background:#23262e;
+    color:#c2c6cf;
+    font-size:11px
+}
+</style>
+</head>
+
+<body>
+
+<div id="stage">
+<canvas id="canvas" width="1280" height="720"></canvas>
+</div>
+
+<div id="status">
+RTC Android Auto<br>
+In attesa...
+</div>
+
+<button id="gear">⚙</button>
+
+<div id="panel">
+<div class="card">
+
+<h1>Android Auto WebRTC</h1>
+
+<div class="sub">
+Tesla Model 3 2019 · MCU2<br>
+Inserisci lo stesso codice mostrato sul telefono.
+</div>
+
+<label>Codice stanza</label>
+
+<input
+    id="room"
+    autocapitalize="none"
+    autocomplete="off"
+    spellcheck="false">
+
+<button id="connect">
+CONNETTI
+</button>
+
+<div id="panelStatus">
+Pronto.
+</div>
+
+<div class="badges">
+<div id="rtcBadge" class="badge">WebRTC: ...</div>
+<div id="codecBadge" class="badge">WebCodecs: ...</div>
+<div id="secureBadge" class="badge">Secure: ...</div>
+</div>
+
+</div>
+</div>
+
+<script>
+"use strict";
+
+var MAGIC=0x41414834;
+
+var pc=null;
+var videoDc=null;
+var controlDc=null;
+var events=null;
+
+var myId=null;
+var topic=null;
+
+var pendingCandidates=[];
+var handledOffer=false;
+
+var assemblies=new Map();
+
+var decoder=null;
+var sps=null;
+var pps=null;
+var haveDecodedKey=false;
+var frameTimestamp=0;
+
+var rxChunks=0;
+var rxBytes=0;
+var decodedFrames=0;
+
+var canvas=document.getElementById("canvas");
+
+var ctx=canvas.getContext(
+    "2d",
+    {
+        alpha:false,
+        desynchronized:true
+    }
+);
+
+var panel=document.getElementById("panel");
+var roomEl=document.getElementById("room");
+var statusEl=document.getElementById("status");
+var panelStatus=document.getElementById("panelStatus");
+
+document.getElementById("rtcBadge").textContent=
+    "WebRTC: "+
+    (typeof RTCPeerConnection==="function"?"✅":"❌");
+
+document.getElementById("codecBadge").textContent=
+    "WebCodecs: "+
+    (
+        typeof VideoDecoder==="function" &&
+        typeof EncodedVideoChunk==="function"
+            ?"✅"
+            :"❌"
+    );
+
+document.getElementById("secureBadge").textContent=
+    "Secure: "+
+    (window.isSecureContext?"✅":"❌");
+
+function setStatus(text){
+    statusEl.innerHTML=text;
+}
+
+function sanitizeRoom(value){
+    return String(value||"")
+        .toLowerCase()
+        .replace(/[^a-z0-9_-]/g,"")
+        .slice(0,20);
+}
+
+function makeId(){
+    return Date.now().toString(36)+"-"+Math.random().toString(36).slice(2,8);
+}
+
+async function publish(payload){
+
+    payload.sender=myId;
+    payload.role="tesla";
+
+    var response=await fetch(
+        "https://ntfy.sh/"+topic,
+        {
+            method:"POST",
+            headers:{
+                "Content-Type":"text/plain;charset=UTF-8"
+            },
+            body:JSON.stringify(payload)
+        }
+    );
+
+    if(!response.ok){
+        throw new Error("Signaling HTTP "+response.status);
+    }
+}
+
+function subscribe(){
+
+    events=new EventSource(
+        "https://ntfy.sh/"+
+        topic+
+        "/sse?since=10m"
+    );
+
+    events.onmessage=async function(event){
+
+        try{
+
+            var outer=JSON.parse(event.data);
+
+            if(outer.event!=="message"){
+                return;
+            }
+
+            var data=JSON.parse(outer.message);
+
+            if(data.sender===myId){
+                return;
+            }
+
+            if(
+                data.type==="offer" &&
+                !handledOffer
+            ){
+
+                handledOffer=true;
+
+                panelStatus.textContent=
+                    "📨 Offer ricevuta...";
+
+                await pc.setRemoteDescription(
+                    data.description
+                );
+
+                await flushCandidates();
+
+                var answer=
+                    await pc.createAnswer();
+
+                await pc.setLocalDescription(
+                    answer
+                );
+
+                await publish({
+                    type:"answer",
+                    description:
+                        pc.localDescription
+                });
+
+                panelStatus.textContent=
+                    "🔄 Connessione WebRTC...";
+
+                return;
+            }
+
+            if(data.type==="candidate"){
+
+                if(pc.remoteDescription){
+
+                    try{
+                        await pc.addIceCandidate(
+                            data.candidate
+                        );
+                    }catch(_){}
+
+                }else{
+
+                    pendingCandidates.push(
+                        data.candidate
+                    );
+                }
+            }
+
+        }catch(error){
+
+            console.log(error);
+        }
+    };
+}
+
+async function flushCandidates(){
+
+    var queue=pendingCandidates;
+
+    pendingCandidates=[];
+
+    for(var i=0;i<queue.length;i++){
+
+        try{
+            await pc.addIceCandidate(
+                queue[i]
+            );
+        }catch(_){}
+    }
+}
+
+function initDecoder(){
+
+    if(
+        typeof VideoDecoder!=="function" ||
+        typeof EncodedVideoChunk!=="function"
+    ){
+
+        setStatus(
+            "❌ WebCodecs non disponibile"
+        );
+
+        return;
+    }
+
+    if(
+        decoder &&
+        decoder.state!=="closed"
+    ){
+
+        try{
+            decoder.close();
+        }catch(_){}
+    }
+
+    haveDecodedKey=false;
+    frameTimestamp=0;
+
+    decoder=new VideoDecoder({
+
+        output:function(frame){
+
+            ctx.drawImage(
+                frame,
+                0,
+                0,
+                canvas.width,
+                canvas.height
+            );
+
+            frame.close();
+
+            decodedFrames++;
+
+            if(
+                decodedFrames===1 ||
+                decodedFrames%30===0
+            ){
+
+                setStatus(
+                    "✅ ANDROID AUTO LIVE<br>"+
+                    decodedFrames+
+                    " frame · "+
+                    rxChunks+
+                    " chunk H264"
+                );
+            }
+        },
+
+        error:function(error){
+
+            console.error(error);
+
+            haveDecodedKey=false;
+
+            setStatus(
+                "❌ Decoder H264<br>"+
+                String(
+                    error.message||
+                    error
+                )
+            );
+        }
+    });
+
+    decoder.configure({
+        codec:"avc1.42E01F",
+        optimizeForLatency:true,
+        hardwareAcceleration:"prefer-hardware"
+    });
+}
+
+function concatBytes(parts){
+
+    var total=0;
+
+    for(var i=0;i<parts.length;i++){
+        total+=parts[i].length;
+    }
+
+    var output=new Uint8Array(total);
+
+    var offset=0;
+
+    for(var j=0;j<parts.length;j++){
+
+        output.set(
+            parts[j],
+            offset
+        );
+
+        offset+=parts[j].length;
+    }
+
+    return output;
+}
+
+function splitAnnexB(data){
+
+    var starts=[];
+
+    for(var i=0;i<data.length-3;i++){
+
+        if(
+            data[i]===0 &&
+            data[i+1]===0 &&
+            data[i+2]===1
+        ){
+
+            starts.push({
+                pos:i,
+                sc:3
+            });
+
+            i+=2;
+
+        }else if(
+            i<data.length-4 &&
+            data[i]===0 &&
+            data[i+1]===0 &&
+            data[i+2]===0 &&
+            data[i+3]===1
+        ){
+
+            starts.push({
+                pos:i,
+                sc:4
+            });
+
+            i+=3;
+        }
+    }
+
+    if(starts.length===0){
+
+        if(data.length===0){
+            return [];
+        }
+
+        return [{
+            type:data[0]&0x1F,
+            bytes:data
+        }];
+    }
+
+    var result=[];
+
+    for(var n=0;n<starts.length;n++){
+
+        var start=starts[n];
+
+        var end=
+            n+1<starts.length
+                ?starts[n+1].pos
+                :data.length;
+
+        var header=
+            start.pos+
+            start.sc;
+
+        if(header>=end){
+            continue;
+        }
+
+        result.push({
+            type:data[header]&0x1F,
+            bytes:data.slice(
+                start.pos,
+                end
+            )
+        });
+    }
+
+    return result;
+}
+
+function feedH264(buffer){
+
+    var data=new Uint8Array(buffer);
+
+    rxChunks++;
+    rxBytes+=data.length;
+
+    var nalus=
+        splitAnnexB(data);
+
+    var types=
+        nalus.map(
+            function(n){
+                return n.type;
+            }
+        );
+
+    for(var i=0;i<nalus.length;i++){
+
+        if(nalus[i].type===7){
+            sps=nalus[i].bytes;
+        }
+
+        if(nalus[i].type===8){
+            pps=nalus[i].bytes;
+        }
+    }
+
+    var hasSps=
+        types.indexOf(7)!==-1;
+
+    var hasPps=
+        types.indexOf(8)!==-1;
+
+    var hasIdr=
+        types.indexOf(5)!==-1;
+
+    var hasPicture=
+        types.some(
+            function(type){
+                return type>=1&&type<=5;
+            }
+        );
+
+    if(
+        rxChunks<=5 ||
+        rxChunks%30===0
+    ){
+
+        setStatus(
+            "📡 RTC H264 "+
+            rxChunks+
+            " · "+
+            Math.round(rxBytes/1024)+
+            " KB<br>"+
+            "NAL "+
+            types.join(",")+
+            " · SPS "+
+            (sps?"✅":"❌")+
+            " · PPS "+
+            (pps?"✅":"❌")+
+            " · IDR "+
+            (hasIdr?"✅":"❌")
+        );
+    }
+
+    if(!hasPicture){
+        return;
+    }
+
+    if(
+        !decoder ||
+        decoder.state!=="configured"
+    ){
+        return;
+    }
+
+    if(
+        !haveDecodedKey &&
+        !hasIdr
+    ){
+        return;
+    }
+
+    var chunkData=data;
+
+    if(hasIdr){
+
+        var prefix=[];
+
+        if(!hasSps&&sps){
+            prefix.push(sps);
+        }
+
+        if(!hasPps&&pps){
+            prefix.push(pps);
+        }
+
+        if(prefix.length>0){
+
+            prefix.push(data);
+
+            chunkData=
+                concatBytes(prefix);
+        }
+    }
+
+    try{
+
+        decoder.decode(
+            new EncodedVideoChunk({
+                type:
+                    hasIdr
+                        ?"key"
+                        :"delta",
+                timestamp:
+                    frameTimestamp+=33333,
+                data:chunkData
+            })
+        );
+
+        if(hasIdr){
+            haveDecodedKey=true;
+        }
+
+    }catch(error){
+
+        console.error(error);
+
+        setStatus(
+            "❌ decode()<br>"+
+            String(
+                error.message||
+                error
+            )
+        );
+    }
+}
+
+function receiveVideoPacket(buffer){
+
+    if(
+        !(buffer instanceof ArrayBuffer) ||
+        buffer.byteLength<12
+    ){
+        return;
+    }
+
+    var view=new DataView(buffer);
+
+    if(
+        view.getUint32(0,false)!==MAGIC
+    ){
+        return;
+    }
+
+    var id=
+        view.getUint32(4,false);
+
+    var part=
+        view.getUint16(8,false);
+
+    var count=
+        view.getUint16(10,false);
+
+    if(
+        count<1 ||
+        part>=count
+    ){
+        return;
+    }
+
+    var entry=
+        assemblies.get(id);
+
+    if(!entry){
+
+        entry={
+            parts:new Array(count),
+            received:0,
+            created:performance.now()
+        };
+
+        assemblies.set(
+            id,
+            entry
+        );
+    }
+
+    if(
+        entry.parts.length!==count
+    ){
+        assemblies.delete(id);
+        return;
+    }
+
+    if(!entry.parts[part]){
+
+        entry.parts[part]=
+            new Uint8Array(
+                buffer.slice(12)
+            );
+
+        entry.received++;
+    }
+
+    if(entry.received===count){
+
+        assemblies.delete(id);
+
+        var complete=
+            concatBytes(
+                entry.parts
+            );
+
+        feedH264(
+            complete.buffer
+        );
+    }
+}
+
+setInterval(
+    function(){
+
+        var now=
+            performance.now();
+
+        assemblies.forEach(
+            function(value,key){
+
+                if(
+                    now-value.created>
+                    1500
+                ){
+                    assemblies.delete(key);
+                }
+            }
+        );
+
+    },
+    500
+);
+
+function setupVideoChannel(channel){
+
+    videoDc=channel;
+
+    videoDc.binaryType="arraybuffer";
+
+    videoDc.onopen=function(){
+
+        panelStatus.textContent=
+            "✅ VIDEO CHANNEL OPEN";
+
+        setStatus(
+            "✅ RTC VIDEO CONNESSO<br>"+
+            "Attendo H264..."
+        );
+
+        panel.classList.add(
+            "hidden"
+        );
+    };
+
+    videoDc.onmessage=function(event){
+
+        if(
+            event.data instanceof ArrayBuffer
+        ){
+
+            receiveVideoPacket(
+                event.data
+            );
+        }
+    };
+}
+
+function setupControlChannel(channel){
+
+    controlDc=channel;
+
+    controlDc.onopen=function(){
+        console.log(
+            "Control channel open"
+        );
+    };
+}
+
+function createPeer(){
+
+    pc=new RTCPeerConnection({
+        iceServers:[
+            {
+                urls:
+                    "stun:stun.cloudflare.com:3478"
+            }
+        ]
+    });
+
+    pc.onicecandidate=
+        async function(event){
+
+        if(!event.candidate){
+            return;
+        }
+
+        try{
+
+            await publish({
+                type:"candidate",
+                candidate:
+                    event.candidate.toJSON
+                        ?event.candidate.toJSON()
+                        :{
+                            candidate:
+                                event.candidate.candidate,
+                            sdpMid:
+                                event.candidate.sdpMid,
+                            sdpMLineIndex:
+                                event.candidate.sdpMLineIndex
+                        }
+            });
+
+        }catch(_){}
+    };
+
+    pc.ondatachannel=function(event){
+
+        if(
+            event.channel.label===
+            "aa-video"
+        ){
+
+            setupVideoChannel(
+                event.channel
+            );
+        }
+
+        if(
+            event.channel.label===
+            "aa-control"
+        ){
+
+            setupControlChannel(
+                event.channel
+            );
+        }
+    };
+
+    pc.onconnectionstatechange=
+        function(){
+
+        panelStatus.textContent=
+            "RTC: "+
+            pc.connectionState;
+
+        if(
+            pc.connectionState===
+            "connected"
+        ){
+
+            setStatus(
+                "✅ WEBRTC P2P CONNECTED"
+            );
+        }
+
+        if(
+            pc.connectionState===
+            "failed"
+        ){
+
+            setStatus(
+                "❌ WEBRTC FAILED"
+            );
+        }
+    };
+}
+
+async function connectRtc(){
+
+    var room=
+        sanitizeRoom(
+            roomEl.value
+        );
+
+    if(room.length<4){
+
+        panelStatus.textContent=
+            "❌ Codice non valido";
+
+        return;
+    }
+
+    roomEl.disabled=true;
+
+    document.getElementById(
+        "connect"
+    ).disabled=true;
+
+    myId=makeId();
+
+    topic=
+        "tesla-aa-stream-"+
+        room;
+
+    initDecoder();
+    createPeer();
+    subscribe();
+
+    panelStatus.textContent=
+        "🚗 Attendo telefono...";
+}
+
+document.getElementById(
+    "connect"
+).onclick=
+    function(){
+
+        connectRtc().catch(
+            function(error){
+
+                panelStatus.textContent=
+                    "❌ "+
+                    error.message;
+            }
+        );
+    };
+
+document.getElementById(
+    "gear"
+).onclick=
+    function(){
+
+        panel.classList.remove(
+            "hidden"
+        );
+    };
+
+var stage=
+    document.getElementById(
+        "stage"
+    );
+
+var activePointer=null;
+var lastMove=0;
+
+function getVideoRect(){
+
+    var width=
+        window.innerWidth;
+
+    var height=
+        window.innerHeight;
+
+    var aspect=
+        1280/720;
+
+    if(
+        width/height>
+        aspect
+    ){
+
+        var h=height;
+        var w=h*aspect;
+
+        return {
+            left:
+                (width-w)/2,
+            top:0,
+            width:w,
+            height:h
+        };
+
+    }else{
+
+        var ww=width;
+        var hh=ww/aspect;
+
+        return {
+            left:0,
+            top:
+                (height-hh)/2,
+            width:ww,
+            height:hh
+        };
+    }
+}
+
+function sendTouch(action,x,y){
+
+    if(
+        !controlDc ||
+        controlDc.readyState!=="open"
+    ){
+        return;
+    }
+
+    var rect=
+        getVideoRect();
+
+    var nx=
+        (x-rect.left)/
+        rect.width;
+
+    var ny=
+        (y-rect.top)/
+        rect.height;
+
+    if(
+        nx<0 ||
+        nx>1 ||
+        ny<0 ||
+        ny>1
+    ){
+        return;
+    }
+
+    controlDc.send(
+        "touch,"+
+        action+
+        ","+
+        nx.toFixed(4)+
+        ","+
+        ny.toFixed(4)
+    );
+}
+
+stage.addEventListener(
+    "pointerdown",
+    function(event){
+
+        activePointer=
+            event.pointerId;
+
+        sendTouch(
+            0,
+            event.clientX,
+            event.clientY
+        );
+    }
+);
+
+stage.addEventListener(
+    "pointermove",
+    function(event){
+
+        if(
+            activePointer!==
+            event.pointerId
+        ){
+            return;
+        }
+
+        var now=
+            performance.now();
+
+        if(
+            now-lastMove<
+            16
+        ){
+            return;
+        }
+
+        lastMove=now;
+
+        sendTouch(
+            2,
+            event.clientX,
+            event.clientY
+        );
+    }
+);
+
+stage.addEventListener(
+    "pointerup",
+    function(event){
+
+        if(
+            activePointer!==
+            event.pointerId
+        ){
+            return;
+        }
+
+        sendTouch(
+            1,
+            event.clientX,
+            event.clientY
+        );
+
+        activePointer=null;
+    }
+);
+
+setStatus(
+    "RTC Android Auto<br>"+
+    "WebCodecs "+
+    (
+        typeof VideoDecoder===
+        "function"
+            ?"✅"
+            :"❌"
+    )
+);
+</script>
+
+</body>
+</html>
