@@ -1,0 +1,1048 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
+<title>Tesla WebRTC Test</title>
+
+<style>
+* {
+    box-sizing: border-box;
+}
+
+html, body {
+    margin: 0;
+    width: 100%;
+    min-height: 100%;
+    background: #090a0d;
+    color: #fff;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Arial, sans-serif;
+}
+
+body {
+    padding: 22px;
+}
+
+.card {
+    width: min(720px, 100%);
+    margin: 0 auto;
+    background: #15171d;
+    border: 1px solid #292c35;
+    border-radius: 22px;
+    padding: 28px;
+}
+
+h1 {
+    margin: 0 0 8px;
+    font-size: 30px;
+}
+
+.sub {
+    color: #9da3af;
+    line-height: 1.45;
+    margin-bottom: 24px;
+}
+
+label {
+    display: block;
+    color: #b8bdc8;
+    margin-bottom: 8px;
+    font-size: 14px;
+}
+
+input {
+    width: 100%;
+    border: 1px solid #3a3e49;
+    background: #22252d;
+    color: white;
+    border-radius: 13px;
+    padding: 15px;
+    font-size: 22px;
+    font-family: monospace;
+    outline: none;
+}
+
+input:focus {
+    border-color: #4285ff;
+}
+
+.row {
+    display: flex;
+    gap: 12px;
+    margin-top: 14px;
+}
+
+button {
+    min-height: 54px;
+    border: 0;
+    border-radius: 13px;
+    padding: 12px 18px;
+    font-size: 16px;
+    font-weight: 700;
+    cursor: pointer;
+}
+
+button:active {
+    transform: scale(.98);
+}
+
+.secondary {
+    background: #292c35;
+    color: white;
+}
+
+.phone {
+    flex: 1;
+    background: #3478f6;
+    color: white;
+}
+
+.tesla {
+    flex: 1;
+    background: #e82127;
+    color: white;
+}
+
+.badges {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin: 22px 0;
+}
+
+.badge {
+    background: #23262e;
+    border-radius: 999px;
+    padding: 8px 12px;
+    color: #c2c6cf;
+    font-size: 12px;
+}
+
+#bigStatus {
+    margin-top: 18px;
+    border-radius: 15px;
+    padding: 17px;
+    background: #20232a;
+    font-size: 17px;
+    font-weight: 700;
+    line-height: 1.45;
+}
+
+.ok {
+    color: #54df8b;
+}
+
+.warn {
+    color: #ffd166;
+}
+
+.err {
+    color: #ff6b6b;
+}
+
+#log {
+    margin-top: 18px;
+    background: #050608;
+    border: 1px solid #292c35;
+    border-radius: 14px;
+    padding: 15px;
+    min-height: 180px;
+    max-height: 340px;
+    overflow: auto;
+    white-space: pre-wrap;
+    word-break: break-word;
+    font: 12px/1.45 monospace;
+    color: #aeb5c1;
+}
+
+.note {
+    color: #777e8b;
+    font-size: 11px;
+    line-height: 1.5;
+    margin-top: 18px;
+}
+
+@media(max-width:600px) {
+    body {
+        padding: 12px;
+    }
+
+    .card {
+        padding: 20px;
+    }
+
+    .row {
+        flex-direction: column;
+    }
+}
+</style>
+</head>
+
+<body>
+
+<div class="card">
+
+<h1>WebRTC Tesla Test</h1>
+
+<div class="sub">
+Test puro del collegamento WebRTC tra telefono e Tesla.<br>
+Niente Android Auto e niente video in questa fase.
+</div>
+
+<label for="room">Codice stanza</label>
+
+<input
+    id="room"
+    type="text"
+    maxlength="20"
+    autocapitalize="none"
+    autocomplete="off"
+    spellcheck="false"
+    placeholder="es. passe8472">
+
+<div class="row">
+    <button id="generate" class="secondary">
+        GENERA CODICE
+    </button>
+</div>
+
+<div class="row">
+    <button id="phone" class="phone">
+        📱 SONO IL TELEFONO
+    </button>
+
+    <button id="tesla" class="tesla">
+        🚗 SONO LA TESLA
+    </button>
+</div>
+
+<div class="badges">
+    <div id="rtcBadge" class="badge">WebRTC: ...</div>
+    <div id="dcBadge" class="badge">DataChannel: ...</div>
+    <div id="secureBadge" class="badge">Secure: ...</div>
+</div>
+
+<div id="bigStatus">
+    Inserisci lo stesso codice su telefono e Tesla.
+</div>
+
+<div id="log"></div>
+
+<div class="note">
+Il codice stanza serve solo per il signaling temporaneo.
+Non inserire dati personali o sensibili.
+</div>
+
+</div>
+
+<script>
+"use strict";
+
+const roomEl = document.getElementById("room");
+const statusEl = document.getElementById("bigStatus");
+const logEl = document.getElementById("log");
+
+const phoneButton = document.getElementById("phone");
+const teslaButton = document.getElementById("tesla");
+const generateButton = document.getElementById("generate");
+
+document.getElementById("rtcBadge").textContent =
+    "WebRTC: " + (
+        typeof RTCPeerConnection === "function"
+            ? "✅"
+            : "❌"
+    );
+
+document.getElementById("dcBadge").textContent =
+    "DataChannel: " + (
+        typeof RTCDataChannel !== "undefined"
+            ? "✅"
+            : "❌"
+    );
+
+document.getElementById("secureBadge").textContent =
+    "Secure: " + (
+        window.isSecureContext
+            ? "✅"
+            : "❌"
+    );
+
+let pc = null;
+let dc = null;
+let events = null;
+
+let myRole = null;
+let myId = null;
+let topic = null;
+
+let pendingCandidates = [];
+let handledOffer = false;
+let handledAnswer = false;
+
+function log(message) {
+
+    const time =
+        new Date().toLocaleTimeString();
+
+    logEl.textContent +=
+        "[" + time + "] " +
+        message +
+        "\n";
+
+    logEl.scrollTop =
+        logEl.scrollHeight;
+}
+
+function status(message, cls) {
+
+    statusEl.className =
+        cls || "";
+
+    statusEl.textContent =
+        message;
+}
+
+function makeId() {
+
+    return (
+        Date.now().toString(36) +
+        "-" +
+        Math.random()
+            .toString(36)
+            .slice(2, 8)
+    );
+}
+
+function makeRoom() {
+
+    return (
+        "passe" +
+        Math.floor(
+            1000 +
+            Math.random() * 9000
+        )
+    );
+}
+
+function sanitizeRoom(value) {
+
+    return String(value || "")
+        .toLowerCase()
+        .replace(
+            /[^a-z0-9_-]/g,
+            ""
+        )
+        .slice(0, 20);
+}
+
+function candidateType(candidate) {
+
+    if (!candidate) {
+        return "unknown";
+    }
+
+    const match =
+        candidate.match(
+            /\btyp\s+([a-z]+)/i
+        );
+
+    return match
+        ? match[1]
+        : "unknown";
+}
+
+async function publish(payload) {
+
+    payload.sender = myId;
+    payload.role = myRole;
+    payload.time = Date.now();
+
+    const url =
+        "https://ntfy.sh/" +
+        topic;
+
+    const body =
+        JSON.stringify(payload);
+
+    log(
+        "SIGNAL TX " +
+        payload.type
+    );
+
+    const response =
+        await fetch(
+            url,
+            {
+                method: "POST",
+                headers: {
+                    "Content-Type":
+                        "text/plain;charset=UTF-8"
+                },
+                body: body
+            }
+        );
+
+    if (!response.ok) {
+
+        throw new Error(
+            "Signaling HTTP " +
+            response.status
+        );
+    }
+}
+
+function subscribe() {
+
+    if (events) {
+        events.close();
+    }
+
+    const url =
+        "https://ntfy.sh/" +
+        topic +
+        "/sse?since=10m";
+
+    log(
+        "Signaling SSE: " +
+        topic
+    );
+
+    events =
+        new EventSource(url);
+
+    events.onopen = function() {
+
+        log(
+            "SIGNALING ONLINE ✅"
+        );
+    };
+
+    events.onerror = function() {
+
+        log(
+            "Signaling SSE errore / riconnessione..."
+        );
+    };
+
+    events.onmessage =
+        async function(event) {
+
+        try {
+
+            const outer =
+                JSON.parse(
+                    event.data
+                );
+
+            if (
+                outer.event !==
+                "message"
+            ) {
+                return;
+            }
+
+            const data =
+                JSON.parse(
+                    outer.message
+                );
+
+            if (
+                data.sender === myId
+            ) {
+                return;
+            }
+
+            log(
+                "SIGNAL RX " +
+                data.type +
+                " da " +
+                data.role
+            );
+
+            await handleSignal(
+                data
+            );
+
+        } catch (error) {
+
+            log(
+                "Signal parse error: " +
+                error.message
+            );
+        }
+    };
+}
+
+function createPeer() {
+
+    pc =
+        new RTCPeerConnection({
+            iceServers: [
+                {
+                    urls:
+                        "stun:stun.cloudflare.com:3478"
+                }
+            ]
+        });
+
+    log(
+        "RTCPeerConnection creato"
+    );
+
+    pc.onicecandidate =
+        async function(event) {
+
+        if (!event.candidate) {
+
+            log(
+                "ICE gathering completato"
+            );
+
+            return;
+        }
+
+        const c =
+            event.candidate;
+
+        log(
+            "ICE locale: " +
+            candidateType(
+                c.candidate
+            )
+        );
+
+        try {
+
+            await publish({
+                type: "candidate",
+                candidate:
+                    c.toJSON
+                        ? c.toJSON()
+                        : {
+                            candidate:
+                                c.candidate,
+                            sdpMid:
+                                c.sdpMid,
+                            sdpMLineIndex:
+                                c.sdpMLineIndex
+                        }
+            });
+
+        } catch (error) {
+
+            log(
+                "Candidate TX error: " +
+                error.message
+            );
+        }
+    };
+
+    pc.onicecandidateerror =
+        function(event) {
+
+        log(
+            "ICE candidate error " +
+            (
+                event.errorCode ||
+                ""
+            ) +
+            " " +
+            (
+                event.errorText ||
+                ""
+            )
+        );
+    };
+
+    pc.oniceconnectionstatechange =
+        function() {
+
+        log(
+            "ICE state → " +
+            pc.iceConnectionState
+        );
+    };
+
+    pc.onconnectionstatechange =
+        function() {
+
+        log(
+            "PC state → " +
+            pc.connectionState
+        );
+
+        if (
+            pc.connectionState ===
+            "connected"
+        ) {
+
+            status(
+                "✅ WEBRTC P2P CONNECTED",
+                "ok"
+            );
+        }
+
+        if (
+            pc.connectionState ===
+            "failed"
+        ) {
+
+            status(
+                "❌ WEBRTC FAILED",
+                "err"
+            );
+        }
+
+        if (
+            pc.connectionState ===
+            "disconnected"
+        ) {
+
+            status(
+                "⚠️ WEBRTC DISCONNECTED",
+                "warn"
+            );
+        }
+    };
+
+    pc.ondatachannel =
+        function(event) {
+
+        log(
+            "DataChannel ricevuto"
+        );
+
+        setupDataChannel(
+            event.channel
+        );
+    };
+}
+
+function setupDataChannel(channel) {
+
+    dc = channel;
+
+    dc.binaryType =
+        "arraybuffer";
+
+    dc.onopen =
+        function() {
+
+        log(
+            "DATA CHANNEL OPEN ✅"
+        );
+
+        status(
+            "✅ DATA CHANNEL OPEN",
+            "ok"
+        );
+
+        dc.send(
+            JSON.stringify({
+                type: "ping",
+                from: myRole,
+                time: Date.now()
+            })
+        );
+    };
+
+    dc.onclose =
+        function() {
+
+        log(
+            "DataChannel chiuso"
+        );
+    };
+
+    dc.onerror =
+        function() {
+
+        log(
+            "DataChannel error"
+        );
+    };
+
+    dc.onmessage =
+        function(event) {
+
+        log(
+            "DATA RX: " +
+            event.data
+        );
+
+        try {
+
+            const data =
+                JSON.parse(
+                    event.data
+                );
+
+            if (
+                data.type ===
+                "ping"
+            ) {
+
+                dc.send(
+                    JSON.stringify({
+                        type: "pong",
+                        from: myRole,
+                        time: Date.now()
+                    })
+                );
+
+                status(
+                    "✅ PING RICEVUTO · WEBRTC FUNZIONA",
+                    "ok"
+                );
+            }
+
+            if (
+                data.type ===
+                "pong"
+            ) {
+
+                status(
+                    "✅ PING/PONG OK · WEBRTC FUNZIONA",
+                    "ok"
+                );
+
+                log(
+                    "🎉 TEST COMPLETATO CON SUCCESSO"
+                );
+            }
+
+        } catch (_) {}
+    };
+}
+
+async function flushCandidates() {
+
+    if (
+        !pc ||
+        !pc.remoteDescription
+    ) {
+        return;
+    }
+
+    const queue =
+        pendingCandidates;
+
+    pendingCandidates = [];
+
+    for (const candidate of queue) {
+
+        try {
+
+            await pc.addIceCandidate(
+                candidate
+            );
+
+        } catch (error) {
+
+            log(
+                "ICE buffered error: " +
+                error.message
+            );
+        }
+    }
+}
+
+async function handleSignal(data) {
+
+    if (!pc) {
+        return;
+    }
+
+    if (
+        data.type === "offer" &&
+        myRole === "tesla" &&
+        !handledOffer
+    ) {
+
+        handledOffer = true;
+
+        status(
+            "📨 Offer ricevuta...",
+            "warn"
+        );
+
+        await pc.setRemoteDescription(
+            data.description
+        );
+
+        await flushCandidates();
+
+        const answer =
+            await pc.createAnswer();
+
+        await pc.setLocalDescription(
+            answer
+        );
+
+        await publish({
+            type: "answer",
+            description:
+                pc.localDescription
+        });
+
+        log(
+            "Answer inviata"
+        );
+
+        status(
+            "🔄 Connessione WebRTC...",
+            "warn"
+        );
+
+        return;
+    }
+
+    if (
+        data.type === "answer" &&
+        myRole === "phone" &&
+        !handledAnswer
+    ) {
+
+        handledAnswer = true;
+
+        await pc.setRemoteDescription(
+            data.description
+        );
+
+        await flushCandidates();
+
+        log(
+            "Answer applicata"
+        );
+
+        status(
+            "🔄 Connessione WebRTC...",
+            "warn"
+        );
+
+        return;
+    }
+
+    if (
+        data.type ===
+        "candidate"
+    ) {
+
+        const candidate =
+            data.candidate;
+
+        log(
+            "ICE remoto: " +
+            candidateType(
+                candidate.candidate
+            )
+        );
+
+        if (
+            pc.remoteDescription
+        ) {
+
+            try {
+
+                await pc.addIceCandidate(
+                    candidate
+                );
+
+            } catch (error) {
+
+                log(
+                    "ICE add error: " +
+                    error.message
+                );
+            }
+
+        } else {
+
+            pendingCandidates.push(
+                candidate
+            );
+
+            log(
+                "ICE remoto bufferizzato"
+            );
+        }
+    }
+}
+
+async function start(role) {
+
+    if (
+        typeof RTCPeerConnection !==
+        "function"
+    ) {
+
+        status(
+            "❌ RTCPeerConnection non supportato",
+            "err"
+        );
+
+        return;
+    }
+
+    const room =
+        sanitizeRoom(
+            roomEl.value
+        );
+
+    if (
+        room.length < 4
+    ) {
+
+        status(
+            "Inserisci un codice stanza di almeno 4 caratteri.",
+            "err"
+        );
+
+        return;
+    }
+
+    myRole = role;
+    myId = makeId();
+
+    topic =
+        "tesla-aa-webrtc-" +
+        room;
+
+    roomEl.value =
+        room;
+
+    phoneButton.disabled =
+        true;
+
+    teslaButton.disabled =
+        true;
+
+    generateButton.disabled =
+        true;
+
+    roomEl.disabled =
+        true;
+
+    logEl.textContent = "";
+
+    log(
+        "Ruolo: " +
+        role
+    );
+
+    log(
+        "Room: " +
+        room
+    );
+
+    status(
+        "🔄 Avvio signaling...",
+        "warn"
+    );
+
+    subscribe();
+
+    createPeer();
+
+    if (
+        role === "phone"
+    ) {
+
+        dc =
+            pc.createDataChannel(
+                "tesla-test",
+                {
+                    ordered: true
+                }
+            );
+
+        setupDataChannel(
+            dc
+        );
+
+        const offer =
+            await pc.createOffer();
+
+        await pc.setLocalDescription(
+            offer
+        );
+
+        await publish({
+            type: "offer",
+            description:
+                pc.localDescription
+        });
+
+        log(
+            "Offer inviata"
+        );
+
+        status(
+            "📱 Telefono pronto · apri la Tesla con lo stesso codice",
+            "warn"
+        );
+
+    } else {
+
+        status(
+            "🚗 Tesla pronta · attendo offer dal telefono",
+            "warn"
+        );
+    }
+}
+
+generateButton.onclick =
+    function() {
+
+        roomEl.value =
+            makeRoom();
+    };
+
+phoneButton.onclick =
+    function() {
+
+        start("phone")
+            .catch(
+                function(error) {
+
+                    log(
+                        "FATAL: " +
+                        error.stack
+                    );
+
+                    status(
+                        "❌ " +
+                        error.message,
+                        "err"
+                    );
+                }
+            );
+    };
+
+teslaButton.onclick =
+    function() {
+
+        start("tesla")
+            .catch(
+                function(error) {
+
+                    log(
+                        "FATAL: " +
+                        error.stack
+                    );
+
+                    status(
+                        "❌ " +
+                        error.message,
+                        "err"
+                    );
+                }
+            );
+    };
+
+roomEl.value =
+    makeRoom();
+</script>
+
+</body>
+</html>
